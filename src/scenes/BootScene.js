@@ -348,11 +348,6 @@ const SPRITES = {
     'WNNNNNNNEE',
     'W.......E.',
   ],
-  arrow_enemy: [
-    'R.......e.',
-    'RccccccceR',
-    'R.......e.',
-  ],
   fireball: [
     '..OOOO..',
     '.OYYYYO.',
@@ -416,7 +411,7 @@ const SPRITES = {
 };
 
 // 5x7 font, one byte per column, bit 0 = top row.
-const FONT_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!.,:-+/?%'()<>";
+const FONT_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!.,:-+/?%'()<>^";
 const FONT_GLYPHS = {
   ' ': [0, 0, 0, 0, 0],
   A: [0x7C, 0x12, 0x11, 0x12, 0x7C], B: [0x7F, 0x49, 0x49, 0x49, 0x36],
@@ -444,13 +439,24 @@ const FONT_GLYPHS = {
   '%': [0x23, 0x13, 0x08, 0x64, 0x62], "'": [0x00, 0x05, 0x03, 0x00, 0x00],
   '(': [0x00, 0x1C, 0x22, 0x41, 0x00], ')': [0x00, 0x41, 0x22, 0x1C, 0x00],
   '<': [0x08, 0x14, 0x22, 0x41, 0x00], '>': [0x00, 0x41, 0x22, 0x14, 0x08],
+  '^': [0x08, 0x04, 0x02, 0x04, 0x08],
 };
 
-// Background colours per theme (0 meadow, 1 cave, 2 castle).
+// Background colours per theme (0 meadow, 1 cave, 2 castle, 3 volcano, 4 sky vault,
+// 5 dark forest, 6 area 51.2, 7 alien planet, 8 alien castle, 9 technology
+// dimension, 10 time-space continuum).
 const THEMES = [
   { skyTop: '#4aa8f0', skyBottom: '#c4ecff', far: '#8aa8d8', near: '#4f9a55', nearShade: '#3d7d45' },
   { skyTop: '#0e0a18', skyBottom: '#2a1f40', far: '#2a2142', near: '#3a2d5a', nearShade: '#2a2044' },
   { skyTop: '#1e1438', skyBottom: '#c8587a', far: '#46305e', near: '#24183a', nearShade: '#ffcd3a' },
+  { skyTop: '#12060a', skyBottom: '#7a2210', far: '#3a1a1c', near: '#22100e', nearShade: '#ff6a00' },
+  { skyTop: '#ffc85a', skyBottom: '#fff4d6', far: '#fff0c8', near: '#ffe2a0', nearShade: '#ffffff' },
+  { skyTop: '#10241a', skyBottom: '#5a9a6a', far: '#1c3424', near: '#0e1e14', nearShade: '#ffcd3a' },
+  { skyTop: '#0a0a2a', skyBottom: '#3a2a5a', far: '#5a3a3a', near: '#8a5a3a', nearShade: '#c0c8d0' },
+  { skyTop: '#2a0a3a', skyBottom: '#e86ab0', far: '#5a2a7a', near: '#2a6a6a', nearShade: '#6ee06a' },
+  { skyTop: '#020a06', skyBottom: '#1a4a2a', far: '#123020', near: '#0c2016', nearShade: '#6ee06a' },
+  { skyTop: '#000008', skyBottom: '#0a1a3a', far: '#00e0ff', near: '#101830', nearShade: '#ff3ad0' },
+  { skyTop: '#0a0418', skyBottom: '#4a1a6a', far: '#6a3a9a', near: '#2a1a4a', nearShade: '#ffcd3a' },
 ];
 
 // Small deterministic random generator so the art looks the same every run.
@@ -467,7 +473,28 @@ class BootScene extends Phaser.Scene {
   constructor() { super('BootScene'); }
 
   create() {
+    Object.assign(PAL, EXTRA_PAL, MORE_PAL);
     Object.keys(SPRITES).forEach(key => this.makePixelTexture(key, SPRITES[key]));
+    Object.keys(EXTRA_SPRITES).forEach(key => this.makePixelTexture(key, EXTRA_SPRITES[key]));
+    Object.keys(MORE_SPRITES).forEach(key => this.makePixelTexture(key, MORE_SPRITES[key]));
+    const allSprites = Object.assign({}, SPRITES, EXTRA_SPRITES, MORE_SPRITES);
+    RECOLORS.forEach(([key, src, swap]) => {
+      this.makePixelTexture(key, allSprites[src].map(r => [...r].map(c => swap[c] || c).join('')));
+    });
+    SHIFTED.forEach(([key, src, shifts]) => {
+      this.makePixelTexture(key, allSprites[src].map((r, y) => {
+        const s = shifts[y] || 0;
+        return s > 0 ? '.'.repeat(s) + r.slice(0, r.length - s) : s < 0 ? r.slice(-s) + '.'.repeat(-s) : r;
+      }));
+    });
+    Object.entries(WAND_TIPS).forEach(([w, [main, light]]) => {
+      this.makePixelTexture('w_' + w, WAND_ICON, Object.assign({}, PAL, { '*': main, '+': light }));
+    });
+    Object.keys(SHAPES).forEach(key => this.makeShapeTexture(key, SHAPES[key]));
+    Object.keys(MORE_SHAPES).forEach(key => this.makeShapeTexture(key, MORE_SHAPES[key]));
+    RUNE_ORDER.forEach(r => this.makePixelTexture('rune_' + r, TEMPLATE_SPRITES.rune, Object.assign({}, PAL, { '*': RUNES[r].glyph })));
+    ARMOR_ORDER.forEach(a => this.makePixelTexture('armor_' + a, TEMPLATE_SPRITES.armor,
+      Object.assign({}, PAL, { '*': ARMORS[a].colors[0], '+': ARMORS[a].colors[1] })));
     this.makeRect('px', 2, 2, '#ffffff');
     const moon = this.textures.createCanvas('moon', 29, 29);
     const mctx = moon.getContext();
@@ -478,22 +505,25 @@ class BootScene extends Phaser.Scene {
     THEMES.forEach((t, i) => this.makeBackground(i, t));
     this.makeFont();
     this.makeAnims();
-    this.scene.start('MenuScene');
+    Shaders.register(this.game);
+    this.scene.start('DeviceScene');
   }
 
   makePixelTexture(key, rows, palette = PAL) {
-    const w = Math.max(...rows.map(r => r.length));
-    const h = rows.length;
+    drawPixelTexture(this.textures, key, rows, palette);
+  }
+
+  makeShapeTexture(key, { w, h, fn }) {
     const tex = this.textures.createCanvas(key, w, h);
     const ctx = tex.getContext();
-    rows.forEach((row, y) => {
-      for (let x = 0; x < row.length; x++) {
-        const c = palette[row[x]];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const c = PAL[fn(x, y)];
         if (!c) continue;
         ctx.fillStyle = c;
         ctx.fillRect(x, y, 1, 1);
       }
-    });
+    }
     tex.refresh();
   }
 
@@ -507,7 +537,7 @@ class BootScene extends Phaser.Scene {
 
   // Tileset: 3 tiles per theme -> [surface, fill, platform].
   makeTileset() {
-    const count = 9;
+    const count = THEMES.length * 3;
     const tex = this.textures.createCanvas('tiles', 16 * count, 16);
     const ctx = tex.getContext();
     const rnd = seededRandom(42);
@@ -572,8 +602,130 @@ class BootScene extends Phaser.Scene {
     ox = 128;
     bricks(ox, '#9a4a3a', '#5a2a22', '#b8604c');
 
+    // Theme 3: volcano
+    ox = 144;
+    fill(ox, '#2e2226'); speckle(ox, ['#3e2e30', '#22181c', '#ff6a00'], 24, 4);
+    ctx.fillStyle = '#ff6a00'; ctx.fillRect(ox, 0, 16, 2);
+    ctx.fillStyle = '#4a3234'; ctx.fillRect(ox, 2, 16, 2);
+    for (let x = 0; x < 16; x++) if (rnd() < 0.35) px(ox, x, 0, '#ffcd3a');
+    ox = 160;
+    fill(ox, '#2e2226'); speckle(ox, ['#3e2e30', '#22181c'], 30);
+    px(ox, 4, 6, '#ff6a00'); px(ox, 5, 7, '#ff6a00'); px(ox, 5, 8, '#ff6a00'); px(ox, 11, 12, '#ff6a00'); px(ox, 12, 11, '#ff6a00');
+    ox = 176;
+    fill(ox, '#1a1424');
+    ctx.fillStyle = '#4a3a6a'; ctx.fillRect(ox, 0, 16, 2);
+    ctx.fillStyle = '#0e0a14'; ctx.fillRect(ox, 14, 16, 2);
+    px(ox, 3, 4, '#6a5a8a'); px(ox, 4, 5, '#6a5a8a'); px(ox, 10, 8, '#6a5a8a'); px(ox, 11, 9, '#6a5a8a');
+
+    // Theme 4: sky vault
+    ox = 192;
+    fill(ox, '#ffe2a0'); speckle(ox, ['#f2d27a', '#fff0c8'], 26, 5);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(ox, 0, 16, 4);
+    for (let x = 0; x < 16; x++) if (rnd() < 0.5) px(ox, x, 4, '#ffffff');
+    ox = 208;
+    fill(ox, '#ffe2a0'); speckle(ox, ['#f2d27a', '#fff0c8', '#e8c070'], 30);
+    ox = 224;
+    bricks(ox, '#f2c040', '#c28a1e', '#ffe080');
+
+    // Theme 5: dark forest
+    ox = 240;
+    fill(ox, '#2a2018'); speckle(ox, ['#1e170f', '#3a2c20'], 24, 4);
+    ctx.fillStyle = '#2f5a28'; ctx.fillRect(ox, 0, 16, 3);
+    for (let x = 0; x < 16; x++) {
+      if (rnd() < 0.5) px(ox, x, 3, '#1c3a1a');
+      if (rnd() < 0.35) px(ox, x, 0, '#5a8a3a');
+    }
+    ox = 256;
+    fill(ox, '#2a2018'); speckle(ox, ['#1e170f', '#3a2c20', '#4a3a2a'], 30);
+    ox = 272;
+    fill(ox, '#4a3420');
+    ctx.fillStyle = '#2f5a28'; ctx.fillRect(ox, 0, 16, 2);
+    ctx.fillStyle = '#2e2014'; ctx.fillRect(ox, 6, 16, 1); ctx.fillRect(ox, 11, 16, 1); ctx.fillRect(ox, 15, 16, 1);
+    px(ox, 4, 8, '#6a4a30'); px(ox, 11, 3, '#6a4a30'); px(ox, 13, 13, '#6a4a30');
+
+    // Theme 6: area 51.2
+    ox = 288;
+    fill(ox, '#c8945a'); speckle(ox, ['#b07e48', '#d8a868'], 26, 3);
+    ctx.fillStyle = '#e0b070'; ctx.fillRect(ox, 0, 16, 3);
+    for (let x = 0; x < 16; x++) if (rnd() < 0.4) px(ox, x, 3, '#a87440');
+    ox = 304;
+    fill(ox, '#c8945a'); speckle(ox, ['#b07e48', '#d8a868', '#a87440'], 30);
+    ox = 320;
+    fill(ox, '#7d8794');
+    ctx.fillStyle = '#a8b0bc'; ctx.fillRect(ox, 0, 16, 2);
+    ctx.fillStyle = '#4a525e'; ctx.fillRect(ox, 14, 16, 2); ctx.fillRect(ox, 0, 1, 16); ctx.fillRect(ox + 15, 0, 1, 16);
+    for (let i = 2; i < 14; i++) px(ox, i, i, '#5d6673');
+    [[2, 3], [13, 3], [2, 12], [13, 12]].forEach(([x, y]) => px(ox, x, y, '#e8ecf0'));
+
+    // Theme 7: alien planet
+    ox = 336;
+    fill(ox, '#5a2a6a'); speckle(ox, ['#4a1f5a', '#7a3a8a', '#c84ab0'], 26, 4);
+    ctx.fillStyle = '#3ad0b0'; ctx.fillRect(ox, 0, 16, 3);
+    for (let x = 0; x < 16; x++) {
+      if (rnd() < 0.5) px(ox, x, 3, '#1a8a7a');
+      if (rnd() < 0.3) px(ox, x, 0, '#a0fff0');
+    }
+    ox = 352;
+    fill(ox, '#5a2a6a'); speckle(ox, ['#4a1f5a', '#7a3a8a', '#c84ab0'], 32);
+    ox = 368;
+    fill(ox, '#c84ab0');
+    ctx.fillStyle = '#ff9ad0'; ctx.fillRect(ox, 0, 16, 2);
+    ctx.fillStyle = '#7a2a6a'; ctx.fillRect(ox, 14, 16, 2);
+    for (let i = 0; i < 6; i++) { px(ox, 3 + i, 3 + i, '#ffd0f0'); px(ox, 12 - i, 6 + i, '#9a3a8a'); }
+
+    // Theme 8: alien castle
+    ox = 384;
+    bricks(ox, '#2a4a3a', '#14261c', '#3a6a4a');
+    ctx.fillStyle = '#6ee06a'; ctx.fillRect(ox, 0, 16, 2);
+    ox = 400;
+    bricks(ox, '#2a4a3a', '#14261c', '#3a6a4a');
+    ox = 416;
+    bricks(ox, '#6a7a2a', '#3a4414', '#9aaa4a');
+
+    // Theme 9: technology dimension
+    const circuit = (o, path) => path.forEach(([x, y]) => px(o, x, y, '#00b8d8'));
+    ox = 432;
+    fill(ox, '#141a2e');
+    circuit(ox, [[2, 8], [3, 8], [4, 8], [5, 8], [6, 8], [7, 8], [8, 8], [9, 8], [10, 8], [10, 9], [10, 10], [10, 11], [10, 12], [10, 13], [13, 5], [13, 6], [13, 7], [12, 7]]);
+    px(ox, 2, 8, '#ff3ad0'); px(ox, 10, 13, '#ffffff');
+    ctx.fillStyle = '#00e0ff'; ctx.fillRect(ox, 0, 16, 1);
+    ctx.fillStyle = '#007a99'; ctx.fillRect(ox, 1, 16, 2);
+    ox = 448;
+    fill(ox, '#141a2e');
+    circuit(ox, [[1, 3], [2, 3], [3, 3], [4, 3], [4, 4], [4, 5], [4, 6], [5, 6], [6, 6], [7, 6], [8, 6], [12, 2], [12, 3], [12, 4], [12, 5], [12, 6], [12, 7], [12, 8], [12, 9], [11, 9], [10, 9], [3, 12], [4, 12], [5, 12], [6, 12], [6, 13]]);
+    px(ox, 8, 6, '#ffffff'); px(ox, 3, 12, '#ff3ad0');
+    ox = 464;
+    fill(ox, '#3a1440');
+    ctx.fillStyle = '#ff3ad0'; ctx.fillRect(ox, 0, 16, 2);
+    ctx.fillStyle = '#1a0820'; ctx.fillRect(ox, 14, 16, 2);
+    for (let x = 2; x < 16; x += 4) px(ox, x, 8, '#00e0ff');
+
+    // Theme 10: time-space continuum
+    ox = 480;
+    fill(ox, '#2a1a4a'); speckle(ox, ['#4a2a6a', '#6a4a9a', '#ffffff'], 18, 4);
+    ctx.fillStyle = '#ffcd3a'; ctx.fillRect(ox, 0, 16, 2);
+    for (let x = 1; x < 16; x += 4) px(ox, x, 2, '#c28a1e');
+    ox = 496;
+    fill(ox, '#2a1a4a'); speckle(ox, ['#4a2a6a', '#6a4a9a', '#ffffff'], 24);
+    ox = 512;
+    fill(ox, '#a87a2a');
+    ctx.fillStyle = '#ffcd3a'; ctx.fillRect(ox, 0, 16, 2);
+    for (let x = 0; x < 16; x++) if (x % 4 < 2) { px(ox, x, 14, '#6a4a14'); px(ox, x, 15, '#6a4a14'); }
+    ctx.fillStyle = '#6a4a14'; ctx.fillRect(ox + 6, 6, 4, 4);
+    px(ox, 7, 7, '#ffcd3a');
+
     tex.refresh();
     for (let i = 0; i < count; i++) tex.add(i, 0, i * 16, 0, 16, 16);
+
+    // Fake walls (secret passages): the same tiles with faint cracks.
+    const fake = this.textures.createCanvas('tiles_fake', 16 * count, 16);
+    const fctx = fake.getContext();
+    fctx.drawImage(tex.getSourceImage(), 0, 0);
+    fctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    const crack = [[3, 5], [4, 6], [5, 6], [6, 7], [6, 8], [7, 9], [8, 9], [9, 10], [10, 4], [11, 5], [11, 6], [12, 11], [11, 12], [4, 12], [5, 13]];
+    for (let i = 0; i < count; i++) crack.forEach(([x, y]) => fctx.fillRect(i * 16 + x, y, 1, 1));
+    fake.refresh();
+    for (let i = 0; i < count; i++) fake.add(i, 0, i * 16, 0, 16, 16);
   }
 
   makeBackground(index, t) {
@@ -634,12 +786,237 @@ class BootScene extends Phaser.Scene {
         nctx.fillRect(x, 0, 1, nhang);
         nctx.fillRect(x, nfloor, 1, H - nfloor);
       }
-      // glowing crystals
+      // glowing specks, then crystal clusters growing up from the floor and
+      // down from the ceiling (big ones on the near layer)
       const rnd = seededRandom(7);
-      for (let i = 0; i < 14; i++) {
-        const x = Math.floor(rnd() * W), y = 60 + Math.floor(rnd() * 140);
-        ctx.fillStyle = '#4dd2ff';
+      for (let i = 0; i < 40; i++) {
+        const x = Math.floor(rnd() * W), y = 40 + Math.floor(rnd() * 170);
+        ctx.fillStyle = i % 4 ? '#4dd2ff' : '#ff9ad0';
         ctx.fillRect(x, y, 1, 1);
+      }
+      const colors = [['#4dd2ff', '#b8f0ff', '#2a8fb8'], ['#b44cff', '#e0b0ff', '#6a2aa8'], ['#ff6ab8', '#ffd0f0', '#a83a7a']];
+      const cluster = (c, x, base, size, up, pal) => {
+        [[-0.6, 0.6], [0, 1], [0.7, 0.75]].forEach(([dx, s]) => {
+          this.crystal(c, Math.round(x + dx * size * 0.5), base, Math.round(size * s), Math.max(3, Math.round(size * s * 0.35)), pal, up);
+        });
+      };
+      for (let i = 0; i < 9; i++) {
+        const x = 10 + i * 28 + Math.floor(rnd() * 10);
+        const pal = colors[i % 3];
+        const floor = Math.round(215 + wave(x, [[10, 4, 1.7], [4, 9, 0.5]]));
+        cluster(ctx, x, floor + 2, 12 + Math.floor(rnd() * 14), true, pal);
+        const hang = Math.max(0, Math.round(30 + wave(x + 14, [[18, 3, 0.3], [10, 8, 1.1], [6, 16, 2.2]])));
+        cluster(ctx, x + 14, hang - 2, 8 + Math.floor(rnd() * 10), false, colors[(i + 1) % 3]);
+      }
+      for (let i = 0; i < 5; i++) {
+        const x = 20 + i * 52;
+        const floor = Math.round(235 + wave(x, [[8, 2, 0.9], [5, 6, 2.4]]));
+        cluster(nctx, x, floor + 2, 22 + (i % 3) * 8, true, colors[(i + 2) % 3]);
+        const hang = Math.max(0, Math.round(15 + wave(x + 26, [[14, 4, 2.1], [12, 10, 0.4]])));
+        cluster(nctx, x + 26, hang - 2, 14 + (i % 2) * 8, false, colors[i % 3]);
+      }
+    } else if (index === 5) {
+      // dark forest: pine silhouettes, glowing eyes, gnarled near trunks
+      const rnd = seededRandom(21);
+      for (let x = 0; x < W; x++) {
+        const top = Math.round(200 + wave(x, [[6, 3, 0.4], [3, 8, 1.2]]));
+        ctx.fillStyle = t.far;
+        ctx.fillRect(x, top, 1, H - top);
+      }
+      for (let tx = 6; tx < W; tx += 17) {
+        const h = 70 + Math.floor(rnd() * 70);
+        for (let i = 0; i < h; i++) {
+          const w = Math.round(1 + i * 0.22 + (i % 12 < 6 ? 0 : -2));
+          ctx.fillRect(tx - Math.max(0, w), 200 - h + i, Math.max(1, w * 2), 1);
+        }
+      }
+      for (let i = 0; i < 6; i++) {
+        const x = Math.floor(rnd() * (W - 8)), y = 150 + Math.floor(rnd() * 50);
+        ctx.fillStyle = t.nearShade;
+        ctx.fillRect(x, y, 1, 1); ctx.fillRect(x + 3, y, 1, 1);
+      }
+      for (let x = 0; x < W; x++) {
+        const ntop = Math.round(228 + wave(x, [[6, 4, 2.0], [4, 9, 0.4]]));
+        nctx.fillStyle = t.near;
+        nctx.fillRect(x, ntop, 1, H - ntop);
+      }
+      [[30, 14], [120, 18], [200, 12]].forEach(([x, w]) => {
+        nctx.fillStyle = t.near;
+        nctx.fillRect(x, 0, w, 240);
+        for (let i = 0; i < 26; i++) {
+          nctx.fillRect(x + w + i, 60 + Math.round(i * 0.6), 1, 3);
+          nctx.fillRect(x - i, 90 - Math.round(i * 0.8), 1, 3);
+        }
+      });
+    } else if (index === 6) {
+      // area 51.2: stars, desert mesas, a fence, a hangar and a radar dish
+      const rnd = seededRandom(51);
+      for (let i = 0; i < 60; i++) {
+        ctx.fillStyle = i % 5 ? '#c8c8e8' : '#ffffff';
+        ctx.fillRect(Math.floor(rnd() * W), Math.floor(rnd() * 150), 1, 1);
+      }
+      for (let x = 0; x < W; x++) {
+        let top = Math.round(195 + wave(x, [[5, 3, 0.6], [3, 7, 1.4]]));
+        if ((x > 20 && x < 70) || (x > 150 && x < 220)) top = Math.min(top, 160 + (x % 7 === 0 ? 1 : 0));
+        ctx.fillStyle = t.far;
+        ctx.fillRect(x, top, 1, H - top);
+      }
+      nctx.fillStyle = t.near;
+      nctx.fillRect(0, 222, W, H - 222);
+      nctx.fillStyle = '#6a6e78';
+      for (let x = 2; x < W; x += 12) nctx.fillRect(x, 204, 1, 18);
+      nctx.fillRect(0, 207, W, 1); nctx.fillRect(0, 214, W, 1);
+      nctx.fillStyle = '#4a4e58';
+      for (let i = 0; i <= 34; i++) {
+        const h = Math.round(Math.sqrt(34 * 34 - i * i));
+        nctx.fillRect(75 - i, 222 - h, 1, h);
+        nctx.fillRect(75 + i, 222 - h, 1, h);
+      }
+      nctx.fillStyle = '#2a2e38'; nctx.fillRect(64, 206, 22, 16);
+      nctx.fillStyle = t.nearShade;
+      nctx.fillRect(176, 186, 2, 36);
+      for (let i = 0; i < 12; i++) nctx.fillRect(170 + i, 180 + Math.round(Math.abs(i - 6) * 0.8), 1, 2);
+      nctx.fillStyle = '#ff4040'; nctx.fillRect(176, 178, 2, 2);
+    } else if (index === 7) {
+      // alien planet: spiky teal mountains and giant glowing mushrooms
+      for (let x = 0; x < W; x++) {
+        const top = Math.round(160 + wave(x, [[22, 2, 0.4], [10, 8, 1.3], [5, 16, 0.2]]) - (x % 32 < 3 ? 6 : 0));
+        ctx.fillStyle = t.far;
+        ctx.fillRect(x, top, 1, H - top);
+        const ntop = Math.round(225 + wave(x, [[6, 4, 2.0], [3, 8, 0.4]]));
+        nctx.fillStyle = t.near;
+        nctx.fillRect(x, ntop, 1, H - ntop);
+      }
+      [[30, 40, 16], [100, 60, 22], [170, 34, 13], [225, 52, 18]].forEach(([x, h, r]) => {
+        nctx.fillStyle = '#c8a0d8';
+        nctx.fillRect(x - 2, 225 - h, 4, h);
+        for (let i = -r; i <= r; i++) {
+          const cap = Math.round(Math.sqrt(r * r - i * i) * 0.6);
+          nctx.fillStyle = '#c84ab0';
+          nctx.fillRect(x + i, 225 - h - cap, 1, cap + 2);
+          if ((i + r) % 5 === 2) { nctx.fillStyle = t.nearShade; nctx.fillRect(x + i, 225 - h - Math.round(cap * 0.6), 2, 2); }
+        }
+      });
+    } else if (index === 8) {
+      // alien castle: onion-domed spires, a wall with green windows
+      for (let x = 0; x < W; x++) {
+        const top = Math.round(195 + wave(x, [[6, 2, 0.8], [3, 5, 0.1]]));
+        ctx.fillStyle = t.far;
+        ctx.fillRect(x, top, 1, H - top);
+      }
+      [[24, 90, 10], [80, 120, 14], [140, 70, 12], [205, 105, 10]].forEach(([x, top, w]) => {
+        ctx.fillStyle = t.far;
+        ctx.fillRect(x, top, w, H - top);
+        for (let i = 0; i < 12; i++) {
+          const half = Math.round(Math.sin((i / 12) * Math.PI) * (w * 0.8));
+          ctx.fillRect(x + w / 2 - half, top - 12 + i, half * 2, 1);
+        }
+        ctx.fillRect(x + w / 2, top - 20, 1, 8);
+        ctx.fillStyle = '#6ee06a';
+        ctx.fillRect(x + w / 2 - 1, top + 10, 2, 3);
+      });
+      for (let x = 0; x < W; x++) {
+        const top = 200 + ((Math.floor(x / 64) % 2) ? -20 : 0);
+        nctx.fillStyle = t.near;
+        nctx.fillRect(x, top, 1, H - top);
+        if (x % 10 < 5) nctx.fillRect(x, top - 4, 1, 4);
+      }
+      nctx.fillStyle = t.nearShade;
+      for (let x = 12; x < W; x += 32) nctx.fillRect(x, (Math.floor(x / 64) % 2) ? 192 : 214, 3, 6);
+    } else if (index === 9) {
+      // technology dimension: a glowing grid and circuit towers
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = t.far;
+      for (let y = 150; y < H; y += Math.max(4, Math.round((y - 140) / 4))) ctx.fillRect(0, y, W, 1);
+      for (let x = 0; x < W; x += 16) ctx.fillRect(x, 150, 1, H - 150);
+      ctx.globalAlpha = 1;
+      const rnd = seededRandom(99);
+      for (let i = 0; i < 30; i++) {
+        ctx.fillStyle = i % 2 ? '#00e0ff' : '#ff3ad0';
+        ctx.fillRect(Math.floor(rnd() * W), Math.floor(rnd() * 140), 1, 1 + Math.floor(rnd() * 4));
+      }
+      [[10, 120, 22], [70, 160, 16], [118, 100, 26], [180, 150, 20], [222, 125, 18]].forEach(([x, top, w]) => {
+        nctx.fillStyle = t.near;
+        nctx.fillRect(x, top, w, H - top);
+        nctx.fillStyle = '#00e0ff';
+        nctx.fillRect(x, top, w, 1);
+        nctx.fillRect(x, top, 1, H - top);
+        nctx.fillStyle = t.nearShade;
+        for (let y = top + 6; y < H; y += 10) nctx.fillRect(x + 4 + (y % 3) * 3, y, 2, 2);
+      });
+    } else if (index === 10) {
+      // time-space continuum: stars, giant clock faces, floating gears
+      const rnd = seededRandom(1010);
+      for (let i = 0; i < 70; i++) {
+        ctx.fillStyle = i % 4 ? '#c8b8f0' : '#ffffff';
+        ctx.fillRect(Math.floor(rnd() * W), Math.floor(rnd() * H), 1, 1);
+      }
+      [[60, 80, 34], [190, 130, 26]].forEach(([cx, cy, r]) => {
+        for (let a = 0; a < 360; a += 2) {
+          const rad = a * Math.PI / 180;
+          ctx.fillStyle = t.far;
+          ctx.fillRect(Math.round(cx + Math.cos(rad) * r), Math.round(cy + Math.sin(rad) * r), 2, 2);
+        }
+        for (let h = 0; h < 12; h++) {
+          const rad = h * Math.PI / 6;
+          ctx.fillStyle = '#ffcd3a';
+          ctx.fillRect(Math.round(cx + Math.cos(rad) * (r - 5)), Math.round(cy + Math.sin(rad) * (r - 5)), 2, 2);
+        }
+        ctx.fillStyle = t.far;
+        for (let i = 0; i < r - 8; i++) ctx.fillRect(cx + Math.round(i * 0.5), cy - Math.round(i * 0.85), 1, 1);
+        for (let i = 0; i < r - 14; i++) ctx.fillRect(cx + i, cy, 1, 1);
+      });
+      const gear = (c, cx, cy, r) => {
+        c.fillStyle = t.near;
+        for (let y = -r - 3; y <= r + 3; y++) {
+          for (let x = -r - 3; x <= r + 3; x++) {
+            const d = Math.hypot(x, y);
+            const ang = Math.atan2(y, x);
+            const tooth = Math.cos(ang * 8) > 0.4 ? 3 : 0;
+            if (d <= r + tooth && d > r * 0.35) c.fillRect(cx + x, cy + y, 1, 1);
+          }
+        }
+      };
+      gear(nctx, 40, 250, 22);
+      gear(nctx, 120, 262, 30);
+      gear(nctx, 210, 245, 18);
+    } else if (index === 3) {
+      // volcanoes with glowing craters, embers in the air
+      const rnd = seededRandom(13);
+      for (let i = 0; i < 40; i++) {
+        ctx.fillStyle = i % 3 ? '#ff6a00' : '#ffcd3a';
+        ctx.fillRect(Math.floor(rnd() * W), Math.floor(rnd() * 170), 1, 1);
+      }
+      for (let x = 0; x < W; x++) {
+        let top = Math.round(170 + wave(x, [[14, 2, 0.4], [6, 7, 1.1]]));
+        [[64, 70], [192, 95]].forEach(([cx, peak]) => { top = Math.min(top, Math.round(peak + Math.abs(x - cx) * 1.3)); });
+        ctx.fillStyle = t.far;
+        ctx.fillRect(x, top, 1, H - top);
+        if ((Math.abs(x - 64) < 6 && top < 78) || (Math.abs(x - 192) < 6 && top < 103)) {
+          ctx.fillStyle = '#ff6a00';
+          ctx.fillRect(x, top, 1, 3);
+        }
+        const ntop = Math.round(212 + wave(x, [[8, 4, 2.0], [6, 13, 0.4], [3, 32, 1.0]]));
+        nctx.fillStyle = t.near;
+        nctx.fillRect(x, ntop, 1, H - ntop);
+      }
+      nctx.fillStyle = t.nearShade;
+      for (let x = 14; x < W; x += 41) nctx.fillRect(x, 238 + (x % 3) * 6, 6, 1);
+    } else if (index === 4) {
+      // drifting golden clouds
+      const cloud = (c, cx, cy, w, col) => {
+        c.fillStyle = col;
+        c.fillRect(cx, cy, w, 8);
+        c.fillRect(cx + 4, cy - 5, w - 10, 5);
+        c.fillRect(cx + 9, cy - 9, w - 20, 4);
+      };
+      [[10, 60, 40], [90, 90, 54], [170, 50, 46], [220, 120, 30]].forEach(([cx, cy, w]) => cloud(ctx, cx, cy, w, t.far));
+      for (let x = 0; x < W; x++) {
+        const ntop = Math.round(205 + wave(x, [[8, 4, 0.7], [5, 9, 1.9]]));
+        nctx.fillStyle = t.near;
+        nctx.fillRect(x, ntop, 1, H - ntop);
+        nctx.fillStyle = t.nearShade;
+        nctx.fillRect(x, ntop, 1, 2);
       }
     } else {
       for (let x = 0; x < W; x++) {
@@ -665,6 +1042,23 @@ class BootScene extends Phaser.Scene {
     }
     far.refresh();
     near.refresh();
+  }
+
+  // One crystal shard: a column of rows that narrows to a point. `up` grows it
+  // up from `base`, otherwise it hangs down from it. pal: [main, light, shade].
+  crystal(ctx, x, base, h, w, pal, up) {
+    for (let i = 0; i < h; i++) {
+      const half = Math.max(0, Math.round((w / 2) * (1 - i / h)));
+      const y = up ? base - i : base + i;
+      ctx.fillStyle = pal[0];
+      ctx.fillRect(x - half, y, half * 2 + 1, 1);
+      ctx.fillStyle = pal[1];
+      ctx.fillRect(x - half, y, 1, 1);
+      if (half > 1) {
+        ctx.fillStyle = pal[2];
+        ctx.fillRect(x + half, y, 1, 1);
+      }
+    }
   }
 
   makeFont() {
@@ -707,7 +1101,107 @@ class BootScene extends Phaser.Scene {
       frameRate: 8,
       repeat: -1,
     });
+    this.anims.create({ key: 'crab_walk', frames: [{ key: 'crab1' }, { key: 'crab2' }], frameRate: 8, repeat: -1 });
+    this.anims.create({ key: 'ninja_run', frames: [{ key: 'ninja1' }, { key: 'ninja2' }], frameRate: 10, repeat: -1 });
+    this.anims.create({ key: 'crab_boss_walk', frames: [{ key: 'crab_boss1' }, { key: 'crab_boss2' }], frameRate: 6, repeat: -1 });
+    this.anims.create({ key: 'dragon_fly', frames: [{ key: 'dragon1' }, { key: 'dragon2' }], frameRate: 4, repeat: -1 });
+    this.anims.create({
+      key: 'portal_spin',
+      frames: [{ key: 'portal1' }, { key: 'portal2' }, { key: 'portal3' }, { key: 'portal4' }],
+      frameRate: 8,
+      repeat: -1,
+    });
+    const loop = (key, frames, frameRate) => this.anims.create({ key, frames: frames.map(k => ({ key: k })), frameRate, repeat: -1 });
+    loop('robot_roll', ['robot1', 'robot2'], 8);
+    loop('glitch_flicker', ['glitch1', 'glitch2', 'glitch1', 'glitch1'], 10);
+    loop('phoenix_fly', ['pet_phoenix1', 'pet_phoenix2'], 6);
+    loop('rhino_run', ['pet_rhino1', 'pet_rhino2'], 10);
+    loop('monkey_idle', ['pet_monkey1'], 1);
+    loop('pegasus_fly', ['pegasus1', 'pegasus2'], 6);
+    loop('tornado_spin', ['tornado1', 'tornado2', 'tornado3'], 14);
+    loop('alienking_hover', ['alienking1', 'alienking2'], 4);
+    ensurePlayerTextures(this, 'classic', null, {});
   }
+}
+
+function drawPixelTexture(textures, key, rows, palette = PAL) {
+  const w = Math.max(...rows.map(r => r.length));
+  const h = rows.length;
+  const tex = textures.createCanvas(key, w, h);
+  const ctx = tex.getContext();
+  rows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      const c = palette[row[x]];
+      if (!c) continue;
+      ctx.fillStyle = c;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  });
+  tex.refresh();
+}
+
+// Draw a grid of CSS colours (null = transparent) as a new texture.
+function drawColorGrid(textures, key, grid) {
+  const tex = textures.createCanvas(key, grid[0].length, grid.length);
+  const ctx = tex.getContext();
+  grid.forEach((row, y) => row.forEach((c, x) => {
+    if (!c) return;
+    ctx.fillStyle = c;
+    ctx.fillRect(x, y, 1, 1);
+  }));
+  tex.refresh();
+}
+
+// Player textures for a skin + armor + accessories combination, made the
+// first time they are needed. Returns the key prefix: prefix + '_idle',
+// '_run' (anim), etc. Armor recolours the tunic and turns the top of the hair
+// into a helmet. Every frame has PLAYER_PAD empty rows on top, room for hats.
+// acc: { hat, neck, face, belt } (defaults to the profile's choices).
+const PLAYER_FRAMES = ['idle', 'run1', 'run2', 'jump', 'attack', 'crouch', 'dash'];
+const PLAYER_PAD = 4;
+
+function ensurePlayerTextures(scene, skinKey, armorKey, acc) {
+  acc = acc || Profile.get().accessories;
+  const skin = SKINS[skinKey] ? skinKey : 'classic';
+  const armor = ARMORS[armorKey] ? armorKey : null;
+  const parts = ACCESSORY_SLOTS.map(s => (ACCESSORIES[s][acc[s]] ? acc[s] : 'none'));
+  const prefix = `pl_${skin}_${armor || 'none'}_${parts.join('_')}`;
+  if (scene.textures.exists(prefix + '_idle')) return prefix;
+
+  const pal = Object.assign({}, PAL, SKINS[skin].colors);
+  if (armor) {
+    pal.A = ARMORS[armor].colors[0];
+    pal.B = ARMORS[armor].colors[0];
+    pal.b = ARMORS[armor].colors[1];
+  }
+  const belt = BELT_COLORS[parts[3]];
+  if (belt) pal.Y = belt;
+  PLAYER_FRAMES.forEach(f => {
+    let rows = SPRITES['player_' + f] || EXTRA_SPRITES['player_' + f];
+    // Accessories are placed relative to the top-left hair pixel.
+    const ay = rows.findIndex(r => r.includes('H'));
+    const ax = rows[ay].indexOf('H');
+    if (armor) {
+      // The first two rows with hair become the helmet.
+      let left = 2;
+      rows = rows.map(r => (left > 0 && r.includes('H') && left--) ? r.replace(/H/g, 'A') : r);
+    }
+    const width = rows[0].length;
+    const grid = [];
+    for (let y = 0; y < rows.length + PLAYER_PAD; y++) grid.push(new Array(width).fill(null));
+    rows.forEach((r, y) => [...r].forEach((ch, x) => { grid[y + PLAYER_PAD][x] = pal[ch] || null; }));
+    ['hat', 'neck', 'face'].forEach((slot, i) => {
+      const art = ACCESSORY_ART[slot][parts[i]];
+      if (!art) return;
+      art.rows.forEach((r, dy) => [...r].forEach((ch, dx) => {
+        const y = ay + PLAYER_PAD + art.oy + dy, x = ax + art.ox + dx;
+        if (PAL[ch] && grid[y] && x >= 0 && x < width) grid[y][x] = PAL[ch];
+      }));
+    });
+    drawColorGrid(scene.textures, prefix + '_' + f, grid);
+  });
+  scene.anims.create({ key: prefix + '_run', frames: [{ key: prefix + '_run1' }, { key: prefix + '_run2' }], frameRate: 10, repeat: -1 });
+  return prefix;
 }
 
 // Shared helper for crisp pixel text (font is uppercase only).

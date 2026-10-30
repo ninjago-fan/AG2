@@ -1,5 +1,7 @@
 // Base enemy plus one subclass per enemy type.
 // Enemies ignore the platform death rule: walls only stop them.
+// Subclasses put their behaviour in tick(); update() skips it while the enemy
+// is frozen (ice), stunned (hammer), stopped in time, or caught in a tornado.
 class Enemy extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, type, texture) {
     super(scene, x, y, texture);
@@ -12,18 +14,53 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.diff = scene.level.difficulty;
     this.hp = this.def.hp + (this.diff.hpBonus || 0);
     this.stunUntil = 0;
+    this.heldUntil = 0;     // frozen or stunned until this time
+    this.heldKind = null;   // 'ice' | 'stun'
+    this.held = false;
+    this.caught = null;     // the tornado carrying this enemy
     this.dying = false;
     this.setDepth(5);
   }
 
   get collidesWithTiles() { return true; }
 
+  // Can't move or attack: frozen, stunned, or the whole world is stopped.
+  isHeld(time = this.scene.time.now) {
+    return time < this.heldUntil || this.scene.timeStopped(time);
+  }
+
+  // Freeze ('ice') or stun ('stun') for ms. Bosses shake it off faster.
+  immobilize(ms, kind) {
+    if (!this.active || this.dying) return;
+    if (this.isBoss) ms *= 0.35;
+    this.heldUntil = Math.max(this.heldUntil, this.scene.time.now + ms);
+    this.heldKind = kind;
+    this.restoreTint();
+    if (kind === 'stun' && !this.stunIcon) {
+      this.stunIcon = this.scene.add.image(this.x, this.y, 'stars').setDepth(7);
+    }
+  }
+
+  // The tint that matches the enemy's state (after a hit flash).
+  restoreTint() {
+    if (!this.active) return;
+    const time = this.scene.time.now;
+    if (time < this.heldUntil && this.heldKind === 'ice') this.setTint(0x90d8ff);
+    else if (this.scene.timeStopped(time)) this.setTint(0xc0b0ff);
+    else this.clearTint();
+  }
+
+  // Stand the enemy on ground whose top edge is at pixel row `bottom`.
+  placeOnGround(bottom) {
+    this.y = bottom - (this.body.offset.y + this.body.height - this.displayOriginY) - 1;
+  }
+
   hurt(damage, dir, knockback) {
     if (!this.active || this.dying) return;
     this.hp -= damage;
     this.scene.floatText(this.x, this.y - this.height / 2, '-' + damage, 0xffe080);
     this.setTintFill(0xffffff);
-    this.scene.time.delayedCall(80, () => { if (this.active) this.clearTint(); });
+    this.scene.time.delayedCall(80, () => this.restoreTint());
     this.scene.fx('spark', this.x, this.y, 5);
     if (this.hp <= 0) {
       this.die();
@@ -42,15 +79,59 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.dying = true;
     Sfx.play('enemyDie');
     this.scene.cameras.main.shake(80, 0.004);
-    this.scene.fx(this.type === 'slime' ? 'goo' : this.type === 'bat' ? 'purple' : 'bone', this.x, this.y, 14);
+    this.scene.fx(this.def.fx || 'bone', this.x, this.y, 14);
     this.scene.addScore(this.def.score, this.x, this.y - 10);
     this.scene.dropLoot(this);
+    this.scene.trackDaily('kill');
     this.destroy();
   }
 
-  update(time) {
-    if (this.active && this.y > this.scene.worldH + 64) this.destroy();
+  destroy(fromScene) {
+    if (this.stunIcon) {
+      this.stunIcon.destroy();
+      this.stunIcon = null;
+    }
+    super.destroy(fromScene);
   }
+
+  update(time, delta) {
+    if (!this.active) return;
+    if (this.y > this.scene.worldH + 64) {
+      this.destroy();
+      return;
+    }
+    if (this.caught) return;          // the tornado moves it
+    if (this.stunIcon) {
+      if (time >= this.heldUntil) {
+        this.stunIcon.destroy();
+        this.stunIcon = null;
+      } else {
+        this.stunIcon.setPosition(this.x, this.y - this.height / 2 - 4).setFlipX(Math.floor(time / 150) % 2 === 0);
+      }
+    }
+    if (!this.dying && this.isHeld(time)) {
+      if (!this.held) {
+        this.held = true;
+        if (this.anims.isPlaying) this.anims.pause();
+        this.restoreTint();
+      }
+      this.body.setVelocityX(0);
+      if (!this.body.allowGravity) this.body.setVelocityY(0);
+      this.body.setAcceleration(0, 0);
+      // Attack timers wait too.
+      if (this.nextAttack) this.nextAttack += delta;
+      this.stunUntil += delta;
+      return;
+    }
+    if (this.held) {
+      this.held = false;
+      if (this.anims.isPaused) this.anims.resume();
+      this.restoreTint();
+    }
+    this.tick(time, delta);
+  }
+
+  tick() {}
 }
 
 class Slime extends Enemy {
@@ -62,8 +143,7 @@ class Slime extends Enemy {
     this.play({ key: 'slime_move', startFrame: Phaser.Math.Between(0, 1) });
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active || time < this.stunUntil) return;
     const b = this.body;
     if (b.blocked.left) this.dir = 1;
@@ -94,8 +174,7 @@ class Bat extends Enemy {
 
   get collidesWithTiles() { return false; }
 
-  update(time, delta) {
-    super.update(time);
+  tick(time, delta) {
     if (!this.active) return;
     const dt = delta / 1000;
     const d = this.def;
@@ -152,8 +231,7 @@ class Skeleton extends Enemy {
     this.windingUp = false;
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active) return;
     const player = this.scene.player;
     if (time >= this.stunUntil && this.body.blocked.down) this.body.setVelocityX(0);
@@ -170,11 +248,15 @@ class Skeleton extends Enemy {
       const dir = dx < 0 ? -1 : 1;
       this.scene.time.delayedCall(d.windup, () => {
         if (!this.active) return;
+        // A real arrow: slight upward arc, pointing where it flies.
         new Projectile(this.scene, this.x + dir * 6, this.y - 1, {
           group: this.scene.enemyProjectiles,
           texture: 'arrow_enemy',
           dir,
-          speed: d.arrowSpeed * this.diff.enemySpeed,
+          vx: dir * d.arrowSpeed * this.diff.enemySpeed,
+          vy: -35,
+          gravity: 70,
+          rotate: true,
           damage: d.damage,
           lifetime: 2600,
         });
@@ -187,4 +269,149 @@ class Skeleton extends Enemy {
   }
 }
 
-const ENEMY_CLASSES = { slime: Slime, bat: Bat, skeleton: Skeleton };
+
+// Scuttles along platforms, then charges sideways when you get close.
+class GemCrab extends Enemy {
+  constructor(scene, x, y) {
+    super(scene, x, y, 'gemCrab', 'crab1');
+    this.body.setSize(14, 8).setOffset(1, 2);
+    this.dir = -1;
+    this.play({ key: 'crab_walk', startFrame: Phaser.Math.Between(0, 1) });
+  }
+
+  tick(time) {
+    if (!this.active || time < this.stunUntil) return;
+    const b = this.body;
+    const d = this.def;
+    const player = this.scene.player;
+    const dx = player.x - this.x;
+    let speed = d.speed;
+    let chasing = false;
+    if (player.canBeTargeted() && Math.abs(dx) < d.chaseRange && Math.abs(player.y - this.y) < 40) {
+      this.dir = dx < 0 ? -1 : 1;
+      speed = d.chaseSpeed;
+      chasing = true;
+    }
+    if (b.blocked.left) this.dir = 1;
+    else if (b.blocked.right) this.dir = -1;
+
+    if (b.blocked.down) {
+      const aheadX = this.dir > 0 ? b.right + 2 : b.left - 2;
+      if (!this.scene.layer.getTileAtWorldXY(aheadX, b.bottom + 4)) {
+        // Wait at the edge while chasing, otherwise turn around.
+        if (chasing) {
+          b.setVelocityX(0);
+          return;
+        }
+        this.dir *= -1;
+      }
+    }
+    b.setVelocityX(this.dir * speed * this.diff.enemySpeed);
+  }
+}
+
+// Little rock creature that hops toward you and shrugs off knockback.
+class Golemite extends Enemy {
+  constructor(scene, x, y) {
+    super(scene, x, y, 'golemite', 'golemite1');
+    this.body.setSize(10, 11).setOffset(1, 1);
+    this.dir = -1;
+    this.nextHop = scene.time.now + 600 + Math.random() * 900;
+  }
+
+  knock(dir, force) {
+    super.knock(dir, force * this.def.knockResist);
+  }
+
+  tick(time) {
+    if (!this.active || time < this.stunUntil) return;
+    const b = this.body;
+    const d = this.def;
+    if (!b.blocked.down) return;
+    b.setVelocityX(0);
+    this.setTexture('golemite1');
+    if (time < this.nextHop) return;
+
+    const dx = this.scene.player.x - this.x;
+    if (Math.abs(dx) < 220) this.dir = dx < 0 ? -1 : 1;
+    // Don't hop off a ledge: check where it would land.
+    const airTime = -2 * d.hopVelocity / 1000;
+    const landX = this.x + this.dir * d.hopSpeed * airTime;
+    if (!this.scene.layer.getTileAtWorldXY(landX, b.bottom + 4)) this.dir *= -1;
+    b.setVelocity(this.dir * d.hopSpeed * this.diff.enemySpeed, d.hopVelocity);
+    this.setTexture('golemite2');
+    this.setFlipX(this.dir < 0);
+    this.nextHop = time + d.hopEvery;
+  }
+}
+
+// Keeps its distance, throws shuriken, and leaps across gaps.
+class Ninja extends Enemy {
+  constructor(scene, x, y) {
+    super(scene, x, y, 'ninja', 'ninja1');
+    this.body.setSize(8, 14).setOffset(2, 1);
+    this.nextThrow = scene.time.now + 800 + Math.random() * 600;
+    this.poseUntil = 0;
+  }
+
+  tick(time) {
+    if (!this.active || time < this.stunUntil) return;
+    const b = this.body;
+    const d = this.def;
+    const player = this.scene.player;
+    const dx = player.x - this.x;
+    const dy = player.y - this.y;
+    const dist = Math.abs(dx);
+    const dir = dx < 0 ? -1 : 1;
+    const awake = player.canBeTargeted() && dist < 260 && Math.abs(dy) < 80;
+
+    if (awake && time > this.nextThrow && dist < d.range && Math.abs(dy) < 50) {
+      new Projectile(this.scene, this.x + dir * 6, this.y - 1, {
+        group: this.scene.enemyProjectiles,
+        texture: 'shuriken',
+        dir,
+        speed: d.starSpeed * this.diff.enemySpeed,
+        spin: 900,
+        damage: d.damage,
+        lifetime: 2000,
+      });
+      Sfx.play('throw');
+      this.nextThrow = time + d.throwRate * this.diff.fireRate;
+      this.poseUntil = time + 220;
+    }
+
+    let move = 0;
+    if (awake) {
+      this.setFlipX(dx < 0);
+      if (dist > 110) move = dir;
+      else if (dist < 60) move = -dir;
+    }
+    if (move !== 0 && b.blocked.down) {
+      const aheadX = move > 0 ? b.right + 2 : b.left - 2;
+      if (!this.scene.layer.getTileAtWorldXY(aheadX, b.bottom + 4)) {
+        // Leap the gap if there is ground within reach, otherwise stop.
+        let landing = false;
+        for (let t = 1; t <= 5 && !landing; t++) {
+          for (let row = -2; row <= 2; row++) {
+            if (this.scene.layer.getTileAtWorldXY(aheadX + move * t * TILE, b.bottom + 4 + row * TILE)) landing = true;
+          }
+        }
+        if (landing) b.setVelocityY(-330);
+        else move = 0;
+      }
+    }
+    if (b.blocked.down || move !== 0) b.setVelocityX(move * d.speed * this.diff.enemySpeed);
+
+    if (time < this.poseUntil) {
+      this.anims.stop();
+      this.setTexture('ninja_throw');
+    } else if (move !== 0 && b.blocked.down) {
+      this.play('ninja_run', true);
+    } else {
+      this.anims.stop();
+      this.setTexture(b.blocked.down ? 'ninja1' : 'ninja2');
+    }
+  }
+}
+
+const ENEMY_CLASSES = { slime: Slime, bat: Bat, skeleton: Skeleton, gemCrab: GemCrab, golemite: Golemite, ninja: Ninja };
