@@ -21,7 +21,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     scene.add.existing(this);
     scene.physics.add.existing(this);
     this.tex = tex;
-    this.body.setSize(8, 14).setOffset(2, 1);
+    this.body.setSize(8, 14).setOffset(2, 1 + PLAYER_PAD);
     this.body.setMaxVelocity(400, 520);
     this.setDepth(10);
 
@@ -43,6 +43,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     this.nextGhost = 0;
     this.airDashUsed = false;
     this.stoneUntil = 0;
+    this.shieldUntil = 0;   // shield potion
+    this.frenzyUntil = 0;   // frenzy potion
+    this.riding = false;    // on the pegasus
+    this.bubble = scene.add.circle(x, y, 13, 0x4dd2ff, 0.22).setStrokeStyle(1, 0xb8f0ff).setDepth(11).setVisible(false);
   }
 
   get state() { return this.scene.state; }
@@ -51,12 +55,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
   stoneActive(time) { return time < this.stoneUntil; }
 
-  update(time, keys) {
+  // ctl: a Controls object (keyboard and touch buttons).
+  update(time, ctl) {
     if (this.dead) return;
     const body = this.body;
     const onFloor = body.blocked.down;
-    const JustDown = Phaser.Input.Keyboard.JustDown;
-
     if (this.frozen) {
       if (this.dashing) this.endDash();
       body.setVelocityX(0);
@@ -77,9 +80,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     // Dash (D): a quick burst in the direction you face. Once per air time.
     if (this.dashing && time >= this.dashUntil) this.endDash();
-    if (!this.dashing && JustDown(keys.dash) && time >= this.nextDash && time >= this.stunUntil
+    if (!this.dashing && ctl.pressed('dash') && time >= this.nextDash && time >= this.stunUntil
         && (onFloor || !this.airDashUsed)) {
-      this.startDash(time, keys, onFloor);
+      this.startDash(time, ctl, onFloor);
     }
     if (this.dashing) {
       body.setVelocity(this.facing * PLAYER_CFG.dashSpeed, 0);
@@ -90,13 +93,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     // Crouch (Down): only on the ground. Flying shots pass over you.
-    this.setCrouch(keys.down.isDown && onFloor);
+    this.setCrouch(ctl.down('down') && onFloor && !this.riding);
 
     let move = 0;
-    if (keys.left.isDown) move -= 1;
-    if (keys.right.isDown) move += 1;
+    if (ctl.down('left')) move -= 1;
+    if (ctl.down('right')) move += 1;
     if (time >= this.stunUntil) {
-      const speed = (PLAYER_CFG.runSpeed + bonus.speed) * (this.crouching ? PLAYER_CFG.crouchSpeed : 1);
+      const speed = (PLAYER_CFG.runSpeed + bonus.speed) * (this.crouching ? PLAYER_CFG.crouchSpeed : 1) * (this.riding ? PEGASUS.speed : 1);
       body.setVelocityX(move * speed);
       if (move !== 0) this.facing = move;
     }
@@ -105,14 +108,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     // Jump (Up). A press just before landing still counts. In the air, a
     // press uses one of your extra jumps (double jump, triple with the upgrade).
     const canGroundJump = onFloor || (this.jumpsUsed === 0 && time - this.lastOnFloor <= PLAYER_CFG.coyoteTime);
-    if (JustDown(keys.up)) {
-      if (!canGroundJump && this.jumpsUsed > 0 && this.jumpsUsed < GameState.maxJumps(this.state)) {
+    if (ctl.pressed('up')) {
+      if (!canGroundJump && this.jumpsUsed > 0 && this.jumpsUsed < this.maxJumps()) {
         this.jumpsUsed++;
         body.setVelocityY(PLAYER_CFG.airJumpVelocity);
         this.jumping = true;
         this.jumpPressedAt = -10000;
         this.scene.fx('spark', this.x, body.bottom, 6);
-        Sfx.play('doubleJump');
+        Sfx.play(this.riding ? 'boomerang' : 'doubleJump');
+        this.scene.trackDaily('jump');
       } else {
         this.jumpPressedAt = time;
       }
@@ -124,32 +128,63 @@ class Player extends Phaser.Physics.Arcade.Sprite {
       this.jumpsUsed = 1;
       this.jumping = true;
       Sfx.play('jump');
+      this.scene.trackDaily('jump');
     }
-    if (this.jumping && !keys.up.isDown && body.velocity.y < 0) {
+    if (this.jumping && !ctl.down('up') && body.velocity.y < 0) {
       body.setVelocityY(body.velocity.y * PLAYER_CFG.jumpCut);
       this.jumping = false;
     }
     if (body.velocity.y >= 0) this.jumping = false;
 
     // Attack (hold to keep attacking at the weapon's rate).
-    if ((keys.attack.isDown || keys.attack2.isDown) && time >= this.nextAttack) this.attack(time, bonus);
+    if (ctl.down('attack') && time >= this.nextAttack) this.attack(time, bonus);
 
     // Flicker while invincible; grey while Stone Skin is on.
     this.setAlpha(time < this.invulnUntil && Math.floor(time / 70) % 2 ? 0.3 : 1);
     if (this.stoneActive(time)) this.setTint(0xb8a888);
+    else if (time < this.frenzyUntil) this.setTint(Math.floor(time / 100) % 2 ? 0xff9a6a : 0xffffff);
     else this.clearTint();
+    this.updateBubble(time);
     this.showFrame(onFloor, move !== 0, time);
+  }
+
+  maxJumps() { return GameState.maxJumps(this.state) + (this.riding ? PEGASUS.extraJumps : 0); }
+
+  // Shield potion bubble; it blinks when it's about to pop.
+  updateBubble(time) {
+    const left = this.shieldUntil - time;
+    this.bubble.setVisible(left > 0 && !this.dead && (left > 1500 || Math.floor(time / 100) % 2 === 0));
+    this.bubble.setPosition(this.x, this.body.center.y);
+  }
+
+  // Get on or off the pegasus. While riding, the body reaches down to the
+  // pegasus' hooves, so the platform rules apply to the horse's feet.
+  setRiding(on) {
+    if (on === this.riding) return;
+    this.setCrouch(false);
+    this.riding = on;
+    if (on) {
+      this.y -= 8;
+      this.body.setSize(10, 22).setOffset(1, 1 + PLAYER_PAD);
+    } else {
+      this.body.setSize(8, 14).setOffset(2, 1 + PLAYER_PAD);
+    }
+  }
+
+  destroy(fromScene) {
+    if (this.bubble) this.bubble.destroy();
+    super.destroy(fromScene);
   }
 
   setCrouch(on) {
     if (on === this.crouching) return;
     this.crouching = on;
-    if (on) this.body.setSize(8, 9).setOffset(2, 6);
-    else this.body.setSize(8, 14).setOffset(2, 1);
+    if (on) this.body.setSize(8, 9).setOffset(2, 6 + PLAYER_PAD);
+    else this.body.setSize(8, 14).setOffset(2, 1 + PLAYER_PAD);
   }
 
-  startDash(time, keys, onFloor) {
-    if (keys.left.isDown !== keys.right.isDown) this.facing = keys.left.isDown ? -1 : 1;
+  startDash(time, ctl, onFloor) {
+    if (ctl.down('left') !== ctl.down('right')) this.facing = ctl.down('left') ? -1 : 1;
     this.setCrouch(false);
     this.dashing = true;
     this.dashUntil = time + PLAYER_CFG.dashTime;
@@ -158,6 +193,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     this.jumping = false;
     this.body.setAllowGravity(false);
     Sfx.play('dash');
+    this.scene.trackDaily('dash');
   }
 
   endDash() {
@@ -184,10 +220,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   attack(time, bonus) {
-    const w = WEAPONS[this.state.weapon];
-    this.nextAttack = time + w.cooldown * (1 - bonus.haste);
+    const key = this.state.weapon;
+    const w = WEAPONS[key];
+    const level = GameState.weaponLevel(this.state, key);
+    const frenzy = time < this.frenzyUntil ? 0.5 : 1;
+    this.nextAttack = time + w.cooldown * (1 - bonus.haste) * FORGE.speed(level) * frenzy;
     this.attackPoseUntil = time + 120;
-    const damage = w.damage + bonus.power;
+    const damage = w.damage + bonus.power + FORGE.damage(level);
     if (w.style === 'melee') this.scene.startMelee(w, damage);
     else this.scene.fireWeapon(w, damage);
     Sfx.play(w.sfx);
@@ -209,7 +248,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   isInvulnerable(time) {
-    return this.dead || this.frozen || this.dashing || time < this.invulnUntil || this.stoneActive(time);
+    return this.dead || this.frozen || this.dashing || time < this.invulnUntil || this.stoneActive(time) || time < this.shieldUntil;
   }
 
   // Knockback and invincibility after a hit. HP is handled by the scene.

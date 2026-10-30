@@ -10,6 +10,7 @@ const GameState = {
       hp: this.BASE_MAX_HP,
       weapon: 'dagger',
       owned: ['dagger'],
+      weaponLevels: {},     // forge level per weapon (missing = level 1)
       score: 0,
       gold: 0,
       armor: null,          // key in ARMORS
@@ -18,6 +19,8 @@ const GameState = {
       runes: [],
       bonusDone: false,     // the bonus level can be played once per run
       inBonus: false,
+      time: 0,              // ms played this run (for the leaderboard)
+      seenStory: [],        // levels whose cutscene has played this run
     };
   },
 
@@ -43,12 +46,22 @@ const GameState = {
     return b;
   },
 
+  weaponLevel(state, key) { return state.weaponLevels[key] || 1; },
+
   maxJumps(state) { return 2 + state.upgrades.jumps; },
 
   dashCooldown(state) { return PLAYER_CFG.dashCooldown - 200 * state.upgrades.dash; },
 
   armorPoints(state) { return state.armor ? ARMORS[state.armor].points : 0; },
 };
+
+// "3:07" or "1:02:45".
+function formatTime(ms) {
+  const s = Math.floor((ms || 0) / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, sec = s % 60;
+  const mm = h ? String(m).padStart(2, '0') : String(m);
+  return (h ? h + ':' : '') + mm + ':' + String(sec).padStart(2, '0');
+}
 
 const SaveManager = {
   KEY: 'ag1-save-v2',
@@ -65,12 +78,15 @@ const SaveManager = {
       maxHp: state.maxHp,
       weapon: state.weapon,
       owned: state.owned.slice(),
+      weaponLevels: Object.assign({}, state.weaponLevels),
       score: state.score,
       gold: state.gold,
       armor: state.armor,
       upgrades: Object.assign({}, state.upgrades),
       runes: state.runes.slice(),
       bonusDone: state.bonusDone,
+      time: Math.round(state.time),
+      seenStory: state.seenStory.slice(),
     };
     try {
       localStorage.setItem(this.KEY, JSON.stringify(data));
@@ -98,6 +114,9 @@ const SaveManager = {
         const n = d.upgrades ? d.upgrades[k] | 0 : 0;
         s.upgrades[k] = Phaser.Math.Clamp(n, 0, UPGRADES[k].max);
       });
+      Object.entries(d.weaponLevels || {}).forEach(([k, n]) => {
+        if (WEAPONS[k]) s.weaponLevels[k] = Phaser.Math.Clamp(n | 0, 1, FORGE.maxLevel);
+      });
       s.level = d.level;
       s.maxHp = s.hp = Math.max(1, d.maxHp | 0);
       s.weapon = weapon;
@@ -107,6 +126,8 @@ const SaveManager = {
       s.armor = ARMORS[d.armor] ? d.armor : null;
       s.runes = (Array.isArray(d.runes) ? d.runes : []).filter(r => RUNES[r]);
       s.bonusDone = !!d.bonusDone;
+      s.time = Math.max(0, Number(d.time) || 0);
+      s.seenStory = (Array.isArray(d.seenStory) ? d.seenStory : []).filter(n => typeof n === 'number');
       return s;
     } catch (e) {
       return null;
@@ -123,7 +144,7 @@ const SaveManager = {
   getBest() {
     let best = 0;
     try { best = parseInt(localStorage.getItem(this.BEST_KEY), 10) || 0; } catch (e) { /* ignore */ }
-    const top = Leaderboard.list()[0];
+    const top = Leaderboard.list('score')[0];
     return Math.max(best, top ? top.score : 0);
   },
 
@@ -133,7 +154,8 @@ const SaveManager = {
   },
 };
 
-// Settings and unlocks that last across runs: skins and the shader toggle.
+// Settings and unlocks that last across runs: the chosen skin and
+// accessories, pets and the pegasus, daily tasks, controls and shaders.
 const Profile = {
   KEY: 'ag1-profile-v1',
   data: null,
@@ -142,12 +164,19 @@ const Profile = {
     if (this.data) return this.data;
     let d = {};
     try { d = JSON.parse(localStorage.getItem(this.KEY)) || {}; } catch (e) { /* ignore */ }
-    const skins = (Array.isArray(d.skins) ? d.skins : []).filter(k => SKINS[k]);
-    if (!skins.includes('classic')) skins.unshift('classic');
+    const acc = {};
+    ACCESSORY_SLOTS.forEach(s => { acc[s] = d.accessories && ACCESSORIES[s][d.accessories[s]] ? d.accessories[s] : 'none'; });
+    const pets = (Array.isArray(d.pets) ? d.pets : []).filter(k => PETS[k]);
     this.data = {
-      skins,
-      skin: skins.includes(d.skin) ? d.skin : 'classic',
+      skin: SKINS[d.skin] ? d.skin : 'classic',
+      accessories: acc,
+      pets,
+      pet: pets.includes(d.pet) ? d.pet : null,
+      pegasus: !!d.pegasus,
       shaders: d.shaders !== false,
+      controls: d.controls === 'ipad' ? 'ipad' : 'computer',
+      daily: d.daily && typeof d.daily === 'object' ? d.daily : null,
+      stars: Math.max(0, d.stars | 0),
     };
     return this.data;
   },
@@ -157,37 +186,50 @@ const Profile = {
   },
 };
 
-// Top 10 scores on this computer. Entries: { name, score, result, date }.
+// Best runs on this computer. Entries: { name, score, level, time, result, date }.
+// The list can be sorted by score, by level reached, or by time (furthest
+// level first, then fastest).
 const Leaderboard = {
   KEY: 'ag1-leaderboard-v1',
-  SIZE: 10,
+  SIZE: 10,             // rows shown
+  KEEP: 50,             // rows stored, so every sort has enough to show
+  SORTS: {
+    score: (a, b) => b.score - a.score,
+    level: (a, b) => (b.level - a.level) || (b.score - a.score),
+    time: (a, b) => (b.level - a.level) || (a.time - b.time),
+  },
 
-  list() {
+  all() {
     try {
       const d = JSON.parse(localStorage.getItem(this.KEY));
       if (!Array.isArray(d)) return [];
-      return d.filter(e => e && typeof e.name === 'string' && typeof e.score === 'number')
-        .sort((a, b) => b.score - a.score)
-        .slice(0, this.SIZE);
+      return d.filter(e => e && typeof e.name === 'string' && typeof e.score === 'number').map(e => Object.assign({
+        // Entries from before levels and times were recorded.
+        level: e.result === 'VICTORY' ? 4 : (parseInt(String(e.result || '').replace(/\D/g, ''), 10) || 1),
+        time: 0,
+      }, e));
     } catch (e) {
       return [];
     }
   },
 
-  qualifies(score) {
-    if (score <= 0) return false;
-    const l = this.list();
-    return l.length < this.SIZE || score > l[l.length - 1].score;
+  list(sort = 'score') {
+    return this.all().sort(this.SORTS[sort] || this.SORTS.score).slice(0, this.SIZE);
   },
 
-  // Returns the new entry's rank (0 = first), or -1 if it didn't make the list.
-  add(name, score, result) {
-    const entry = { name: name.slice(0, 3), score, result, date: Date.now() };
-    const l = this.list();
+  qualifies(score) {
+    if (score <= 0) return false;
+    const l = this.all().sort(this.SORTS.score);
+    return l.length < this.KEEP || score > l[l.length - 1].score;
+  },
+
+  // Returns the new entry (so the leaderboard can highlight it).
+  add(name, score, level, time, result) {
+    const entry = { name: name.slice(0, 3), score, level, time: Math.round(time), result, date: Date.now() };
+    const l = this.all();
     l.push(entry);
-    l.sort((a, b) => b.score - a.score);
-    const top = l.slice(0, this.SIZE);
-    try { localStorage.setItem(this.KEY, JSON.stringify(top)); } catch (e) { /* ignore */ }
-    return top.indexOf(entry);
+    l.sort(this.SORTS.score);
+    try { localStorage.setItem(this.KEY, JSON.stringify(l.slice(0, this.KEEP))); } catch (e) { /* ignore */ }
+    return entry;
   },
 };

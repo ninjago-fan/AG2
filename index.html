@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>AG1</title>
   <style>
     html, body {
@@ -10,6 +11,9 @@
       height: 100%;
       background: #0b0b14;
       overflow: hidden;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
     #game {
       width: 100%;
@@ -33,24 +37,37 @@
   <script src="src/data/levels.js"></script>
   <script src="src/data/gear.js"></script>
   <script src="src/data/sprites.js"></script>
+  <script src="src/data/sprites2.js"></script>
+  <script src="src/data/story.js"></script>
 
   <!-- Systems -->
   <script src="src/systems/SaveManager.js"></script>
   <script src="src/systems/Sound.js"></script>
   <script src="src/systems/Shaders.js"></script>
+  <script src="src/systems/Controls.js"></script>
+  <script src="src/systems/Daily.js"></script>
 
   <!-- Entities -->
   <script src="src/entities/Projectile.js"></script>
   <script src="src/entities/Pickup.js"></script>
   <script src="src/entities/Enemy.js"></script>
+  <script src="src/entities/NewEnemies.js"></script>
   <script src="src/entities/Boss.js"></script>
+  <script src="src/entities/NewBosses.js"></script>
   <script src="src/entities/Player.js"></script>
+  <script src="src/entities/Companions.js"></script>
 
   <!-- Scenes -->
   <script src="src/scenes/BootScene.js"></script>
+  <script src="src/scenes/DeviceScene.js"></script>
   <script src="src/scenes/MenuScene.js"></script>
+  <script src="src/scenes/WardrobeScene.js"></script>
+  <script src="src/scenes/DailyScene.js"></script>
+  <script src="src/scenes/CutsceneScene.js"></script>
   <script src="src/scenes/GameScene.js"></script>
+  <script src="src/scenes/GameMagic.js"></script>
   <script src="src/scenes/UIScene.js"></script>
+  <script src="src/scenes/TouchScene.js"></script>
   <script src="src/scenes/PauseScene.js"></script>
   <script src="src/scenes/ShopScene.js"></script>
   <script src="src/scenes/WinScene.js"></script>

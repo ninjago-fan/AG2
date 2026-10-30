@@ -16,7 +16,11 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   audio: { noAudio: true },   // sound effects use our own Web Audio synth
-  scene: [BootScene, MenuScene, GameScene, UIScene, PauseScene, ShopScene, WinScene, NameEntryScene, LeaderboardScene],
+  input: { activePointers: 5 },   // several fingers at once on an iPad
+  scene: [
+    BootScene, DeviceScene, MenuScene, WardrobeScene, DailyScene, CutsceneScene,
+    GameScene, UIScene, TouchScene, PauseScene, ShopScene, WinScene, NameEntryScene, LeaderboardScene,
+  ],
 };
 
 window.game = new Phaser.Game(config);

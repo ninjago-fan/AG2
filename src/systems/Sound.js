@@ -98,8 +98,32 @@ const Sfx = {
       case 'bossDie':    this.notes([392, 330, 262, 196, 131], 0.14, 'sawtooth', 0.25); this.noise(1.0, 0.4, 500); break;
       case 'buy':        this.notes([784, 1047, 1319], 0.06, 'square', 0.2); break;
       case 'error':      this.tone(160, 110, 0.15, 'square', 0.2); break;
+      case 'freeze':     this.tone(1800, 900, 0.12, 'triangle', 0.2); this.noise(0.12, 0.15, 6000, 'highpass'); break;
+      case 'frozen':     this.notes([1568, 1319, 1047], 0.04, 'triangle', 0.18); break;
+      case 'quake':      this.noise(0.6, 0.5, 300); this.tone(70, 35, 0.6, 'sawtooth', 0.3); break;
+      case 'wind':       this.noise(0.8, 0.3, 900, 'bandpass'); this.tone(300, 600, 0.6, 'sine', 0.08); break;
+      case 'zap':        this.noise(0.2, 0.35, 5000, 'highpass'); this.tone(1200, 200, 0.2, 'sawtooth', 0.15); break;
+      case 'void':       this.tone(90, 180, 0.3, 'sine', 0.3); this.tone(180, 60, 0.3, 'triangle', 0.15); break;
+      case 'voidHit':    this.tone(400, 80, 0.2, 'sine', 0.3); break;
+      case 'boomerang':  this.noise(0.12, 0.2, 2000, 'bandpass'); this.tone(500, 700, 0.1, 'triangle', 0.1); break;
+      case 'catch':      this.tone(700, 1000, 0.06, 'triangle', 0.18); break;
+      case 'stun':       this.notes([1319, 988, 1319, 988], 0.05, 'square', 0.12); break;
+      case 'neigh':      this.tone(700, 1100, 0.15, 'sawtooth', 0.15); this.tone(1100, 500, 0.3, 'sawtooth', 0.15, 0.15); break;
+      case 'laser':      this.tone(1400, 300, 0.12, 'square', 0.15); break;
+      case 'plasma':     this.tone(300, 900, 0.15, 'sine', 0.25); break;
+      case 'glitch':     this.noise(0.08, 0.3, 3000, 'bandpass'); this.tone(80, 2000, 0.05, 'square', 0.1, 0.04); break;
+      case 'timeStop':   this.notes([1047, 784, 523, 262], 0.08, 'triangle', 0.25); break;
+      case 'item':       this.notes([523, 784, 659, 1047], 0.06, 'triangle', 0.25); break;
+      case 'shield':     this.tone(400, 1200, 0.3, 'sine', 0.25); break;
+      case 'heal':       this.notes([523, 659, 784, 1047, 1319], 0.06, 'sine', 0.3); break;
+      case 'ghost':      this.tone(500, 300, 0.4, 'sine', 0.2); this.tone(510, 290, 0.4, 'sine', 0.2); break;
+      case 'wave':       this.noise(0.7, 0.4, 700, 'lowpass'); break;
+      case 'task':       this.notes([784, 988, 1175, 1568], 0.07, 'square', 0.18); break;
+      case 'type':       this.tone(900, null, 0.02, 'square', 0.05); break;
     }
   },
 };
 
 window.addEventListener('keydown', () => Sfx.unlock());
+window.addEventListener('pointerdown', () => Sfx.unlock());
+window.addEventListener('touchstart', () => Sfx.unlock());

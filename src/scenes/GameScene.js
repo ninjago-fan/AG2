@@ -28,10 +28,16 @@ class GameScene extends Phaser.Scene {
     this.bossStarted = false;
     this.chestReady = true;
     this.arena = this.level.boss ? { left: (this.level.width - ARENA_WIDTH) * TILE, right: this.worldW } : null;
-    this.powerReady = { earth: 0, crystal: 0, shadow: 0 };   // time each superpower can be used again
+    this.powerReady = {};     // time each superpower can be used again
+    RUNE_ORDER.forEach(r => { this.powerReady[r] = 0; });
+    this.timeStopUntil = 0;   // time rune / time freeze apple
+    this.tornadoes = [];
+    this.voidPulseUntil = 0;
     this.bonusEndsAt = 0;
     this.msgAt = 0;
     this.nextSparkle = 0;
+    this.pet = null;
+    this.pegasus = null;
     this.registry.set('boss', null);
 
     this.createBackground();
@@ -46,7 +52,11 @@ class GameScene extends Phaser.Scene {
     this.createEmitters();
     this.createSecrets();
     this.spawnEntities();
+    this.createCompanions();
     this.createColliders();
+    this.voidRing = this.add.circle(0, 0, 30, 0x6a2aa8, 0.12).setStrokeStyle(1, 0xb44cff, 0.9).setDepth(9).setVisible(false);
+    this.timeTint = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x6050ff, 0.12)
+      .setOrigin(0).setScrollFactor(0).setDepth(90).setVisible(false);
 
     // Camera: follows the player to the right and never scrolls back left.
     const cam = this.cameras.main;
@@ -55,23 +65,17 @@ class GameScene extends Phaser.Scene {
     cam.fadeIn(300);
     Shaders.apply(this);
 
-    this.keys = this.input.keyboard.addKeys({
-      left: 'LEFT', right: 'RIGHT', up: 'UP', down: 'DOWN',
-      attack: 'SPACE', attack2: 'J', dash: 'D', esc: 'ESC',
-      powerEarth: 'Q', powerCrystal: 'W', powerShadow: 'E', shaders: 'V',
-    });
-    // Weapon switching: letter hotkeys and number keys 1-8 (bar order).
-    this.weaponKeys = Object.entries(WEAPON_HOTKEYS).map(([k, w]) => [this.input.keyboard.addKey(k), w]);
-    WEAPON_ORDER.forEach((w, i) => this.weaponKeys.push([this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE + i), w]));
-    const onResume = () => {
-      Object.values(this.keys).forEach(k => k.reset());
-      this.weaponKeys.forEach(([k]) => k.reset());
-    };
+    this.controls = new Controls(this);
+    const onResume = () => this.controls.reset();
     this.events.on('resume', onResume);
     this.events.once('shutdown', () => this.events.off('resume', onResume));
 
     if (!this.scene.isActive('UIScene')) this.scene.launch('UIScene');
     this.scene.bringToTop('UIScene');
+    if (InputMode.ipad) {
+      if (!this.scene.isActive('TouchScene')) this.scene.launch('TouchScene');
+      this.scene.bringToTop('TouchScene');
+    }
 
     if (this.inBonus) this.banner('BONUS LEVEL', `GRAB ALL YOU CAN IN ${this.level.timeLimit} SECONDS`, 1800);
     else if (this.checkpoint) this.banner('TRY AGAIN!', this.boss ? this.boss.def.name : '', 1200);
@@ -86,6 +90,12 @@ class GameScene extends Phaser.Scene {
     this.add.image(0, 0, 'sky_' + t).setOrigin(0).setDisplaySize(W, H).setScrollFactor(0).setDepth(-30);
     if (t === 2) this.add.image(380, 52, 'moon').setScrollFactor(0).setDepth(-25);
     if (t === 3) this.add.image(380, 52, 'moon').setTint(0xff5030).setScrollFactor(0).setDepth(-25);
+    if (t === 6) this.add.image(400, 44, 'moon').setTint(0xe8e8ff).setScrollFactor(0).setDepth(-25);
+    if (t === 7) {
+      this.add.image(90, 50, 'moon').setTint(0xff9ad0).setScale(1.4).setScrollFactor(0).setDepth(-25);
+      this.add.image(380, 70, 'moon').setTint(0x6ee0d0).setScale(0.7).setScrollFactor(0).setDepth(-25);
+    }
+    if (t === 8) this.add.image(380, 50, 'moon').setTint(0x6ee06a).setScrollFactor(0).setDepth(-25);
     this.bgFar = this.add.tileSprite(0, 0, W, H, 'bg_far_' + t).setOrigin(0).setScrollFactor(0).setDepth(-20);
     this.bgNear = this.add.tileSprite(0, 0, W, H, 'bg_near_' + t).setOrigin(0).setScrollFactor(0).setDepth(-10);
   }
@@ -128,6 +138,11 @@ class GameScene extends Phaser.Scene {
       smoke: make([0x3a3a4a, 0x5a5a6a, 0x8a8a9a], floaty),
       shadow: make([0xb44cff, 0x6a2aa8, 0x17121f], floaty),
       ember: make([0xff6a00, 0xffcd3a, 0x2e2442]),
+      water: make([0x3a8fff, 0xb8e0ff, 0x1a4a9a]),
+      ice: make([0xe8f8ff, 0x90d8ff, 0x4dd2ff], { gravityY: 120 }),
+      ghost: make([0x9adfa0, 0xe8fff0], floaty),
+      glitch: make([0xff3ad0, 0x00e0ff, 0x1a1c2c], { gravityY: 0, lifespan: { min: 120, max: 300 } }),
+      zap: make([0xfff2a0, 0xffffff, 0xffcd3a], { speed: { min: 60, max: 200 }, gravityY: 0, lifespan: { min: 100, max: 220 } }),
     };
   }
 
@@ -150,6 +165,7 @@ class GameScene extends Phaser.Scene {
         for (let x = x0; x <= x1; x++) {
           const wall = this.runeWalls.create(x * TILE + 8, y * TILE + 8, 'runewall').setDepth(2);
           wall.rune = rune;
+          wall.setTint(RUNES[rune].color);
         }
       }
     });
@@ -185,14 +201,15 @@ class GameScene extends Phaser.Scene {
         const cy = ty * TILE + TILE / 2;
         const bottom = (ty + 1) * TILE;
         if (ch === 'P') {
-          this.spawnPoint = { x, y: bottom - 8 };
+          this.spawnPoint = { x, y: bottom - 10 };
         } else if (ch === 'C') {
           this.chest = this.physics.add.staticImage(x, bottom - 7, 'chest_closed').setDepth(3);
         } else if (ch === 'K') {
           this.boss = new BOSS_CLASSES[this.level.boss](this, x, cy);
           if (this.boss.collidesWithTiles) this.boss.placeOnGround(bottom);
         } else if (ENEMY_CHARS[ch]) {
-          const e = new ENEMY_CLASSES[ENEMY_CHARS[ch]](this, x, ENEMY_CHARS[ch] === 'bat' ? cy : bottom - 8);
+          const type = ENEMY_CHARS[ch];
+          const e = new ENEMY_CLASSES[type](this, x, FLYING_ENEMIES.includes(type) ? cy : bottom - 8);
           if (e.collidesWithTiles) e.placeOnGround(bottom);
         } else if (ch === 'o') {
           new Pickup(this, x, cy, 'coin');
@@ -218,52 +235,78 @@ class GameScene extends Phaser.Scene {
       this.chest.setVisible(false);
       this.chestReady = false;
     }
-    if (this.checkpoint) this.spawnPoint = { x: this.checkpoint.x, y: this.groundTop(this.checkpoint.x) - 8 };
+    if (this.checkpoint) this.spawnPoint = { x: this.checkpoint.x, y: this.groundTop(this.checkpoint.x) - 10 };
     const tex = ensurePlayerTextures(this, Profile.get().skin, this.state.armor);
     this.player = new Player(this, this.spawnPoint.x, this.spawnPoint.y, tex);
+  }
+
+  // Your pet and the pegasus (both bought in the shop) come along.
+  createCompanions() {
+    const p = Profile.get();
+    const { x, y } = this.spawnPoint;
+    if (p.pet) this.pet = new Pet(this, x - 16, y, p.pet);
+    if (p.pegasus) this.pegasus = new Pegasus(this, x - 26, y - 34);
   }
 
   createColliders() {
     const p = this.physics;
     this.playerTiles = p.add.collider(this.player, this.layer, (pl, tile) => this.checkTileContact(tile));
     this.playerWalls = p.add.collider(this.player, this.runeWalls, (pl, wall) => this.hitRuneWall(wall));
-    p.add.collider(this.enemies, this.layer, null, e => e.collidesWithTiles);
-    p.add.collider(this.enemies, this.runeWalls, null, e => e.collidesWithTiles);
+    p.add.collider(this.enemies, this.layer, null, e => e.collidesWithTiles && !e.caught);
+    p.add.collider(this.enemies, this.runeWalls, null, e => e.collidesWithTiles && !e.caught);
     p.add.collider(this.pickups, this.layer);
     p.add.collider(this.bombs, this.layer);
     p.add.collider(this.bombs, this.runeWalls);
     [this.playerProjectiles, this.enemyProjectiles].forEach(g => {
-      p.add.collider(g, this.layer, proj => proj.impact());
-      p.add.collider(g, this.runeWalls, proj => proj.impact());
+      p.add.collider(g, this.layer, proj => proj.impact(), proj => !proj.ghost);
+      p.add.collider(g, this.runeWalls, proj => proj.impact(), proj => !proj.ghost);
     });
 
     p.add.overlap(this.player, this.enemies, (pl, e) => this.touchEnemy(e));
     p.add.overlap(this.player, this.enemyProjectiles, (pl, proj) => {
-      if (!proj.active || this.player.isInvulnerable(this.time.now)) return;
+      if (!proj.active || proj.caughtBy || this.player.isInvulnerable(this.time.now)) return;
       // Crouching ducks under flying shots. Falling rocks and ground tremors still hit.
       if (this.player.crouching && !proj.hitsLow) return;
       this.damagePlayer(proj.damage, proj.x);
       proj.impact();
     });
     p.add.overlap(this.playerProjectiles, this.enemies, (proj, e) => {
-      if (!proj.active || e.dying) return;
+      if (!proj.active || e.dying || e.caught) return;
       if (proj.pierce) {
         if (proj.hits.has(e)) return;
         proj.hits.add(e);
-        e.hurt(proj.damage, proj.dir, proj.knockback);
+        this.projectileHit(proj, e);
         return;
       }
-      e.hurt(proj.damage, proj.dir, proj.knockback);
+      this.projectileHit(proj, e);
       proj.impact();
     });
+    // The boom-arang grabs coins; the tidal wave washes away enemy shots.
+    p.add.overlap(this.playerProjectiles, this.pickups, (proj, item) => {
+      if (proj.collects && (item.kind === 'coin' || item.kind === 'gem')) this.collect(item);
+    });
+    p.add.overlap(this.playerProjectiles, this.enemyProjectiles, (proj, shot) => {
+      if (proj.sweeps && !shot.caughtBy) shot.impact();
+    });
     p.add.overlap(this.bombs, this.enemies, (bomb, e) => {
-      if (!e.dying && !(e.isBoss && !e.awake)) bomb.explode();
+      if (!e.dying && !e.caught && !(e.isBoss && !e.awake)) bomb.explode();
     });
     p.add.overlap(this.player, this.pickups, (pl, item) => this.collect(item));
     p.add.overlap(this.player, this.chest, () => {
       if (this.chestReady) this.reachChest();
     });
     if (this.portal) p.add.overlap(this.player, this.portal, () => this.enterPortal());
+  }
+
+  projectileHit(proj, e) {
+    e.hurt(proj.damage, proj.dir, proj.knockback);
+    if (proj.fromPet) this.trackDaily('petHit');
+    if (proj.freeze && e.active && !e.dying) {
+      e.immobilize(proj.freeze, 'ice');
+      this.fx('ice', e.x, e.y, 8);
+      Sfx.play('frozen');
+      this.trackDaily('freeze');
+    }
   }
 
   // ------------------------------------------------- platform death rule
@@ -326,36 +369,55 @@ class GameScene extends Phaser.Scene {
 
   // ---------------------------------------------------------------- update
 
-  update(time) {
-    const k = this.keys;
-    if (Phaser.Input.Keyboard.JustDown(k.esc) && !this.dead && !this.completing) {
-      Sfx.play('pause');
-      this.scene.launch('PauseScene');
-      this.scene.bringToTop('PauseScene');
-      this.scene.pause();
+  update(time, delta) {
+    const c = this.controls;
+    if (c.pressed('pause') && !this.dead && !this.completing) {
+      this.pauseGame();
       return;
     }
-    if (Phaser.Input.Keyboard.JustDown(k.shaders)) {
+    if (c.pressed('shaders')) {
       Shaders.toggle();
       Shaders.apply(this);
       this.floatText(this.player.x, this.player.y - 20, Shaders.label(), 0xffffff);
     }
     if (!this.dead && !this.completing) {
+      this.state.time += delta;
       this.updateWeaponKeys();
       this.updatePowers(time);
+      if (c.pressed('pegasus')) this.togglePegasus(time);
     }
 
-    this.player.update(time, k);
+    this.player.update(time, c);
     this.updateMelee(time);
+    this.updateVoid(time);
+    this.tornadoes.slice().forEach(t => t.update(time, delta));
+    if (this.pegasus) this.pegasus.update(time, delta);
+    if (this.pet) this.pet.update(time, delta);
     this.updateCamera();
     this.updateSecrets(time);
     this.updateBossTrigger(time);
+    this.timeTint.setVisible(this.timeStopped(time));
 
     if (this.inBonus && !this.completing) {
       if (!this.bonusEndsAt) this.bonusEndsAt = time + this.level.timeLimit * 1000;
       if (time > this.bonusEndsAt) this.finishBonus(false);
     }
     if (!this.dead && this.player.body.top > this.worldH) this.killPlayer();
+  }
+
+  pauseGame() {
+    if (this.dead || this.completing || !this.scene.isActive()) return;
+    Sfx.play('pause');
+    this.scene.launch('PauseScene');
+    this.scene.bringToTop('PauseScene');
+    this.scene.pause();
+  }
+
+  // Stop the HUD and touch buttons, then go to another scene.
+  leaveTo(key, data) {
+    this.scene.stop('UIScene');
+    this.scene.stop('TouchScene');
+    this.scene.start(key, data);
   }
 
   updateCamera() {
@@ -392,6 +454,7 @@ class GameScene extends Phaser.Scene {
         Sfx.play('secret');
         this.addScore(50, s.rect.centerX, s.rect.y - 6);
         this.floatText(s.rect.centerX, s.rect.y - 16, 'SECRET!', 0xffe080);
+        this.trackDaily('secret');
       }
       s.alpha += ((inside ? 0.3 : 1) - s.alpha) * 0.2;
       s.images.forEach(img => img.setAlpha(s.alpha));
@@ -408,32 +471,40 @@ class GameScene extends Phaser.Scene {
   }
 
   updateWeaponKeys() {
-    for (const [key, w] of this.weaponKeys) {
-      if (!Phaser.Input.Keyboard.JustDown(key)) continue;
-      if (!this.state.owned.includes(w)) {
-        Sfx.play('error');
-        this.message(this.player.x, this.player.y - 14, 'NO ' + WEAPONS[w].name, 0xff8080);
-      } else if (this.state.weapon !== w) {
-        this.state.weapon = w;
-        Sfx.play('select');
-        this.floatText(this.player.x, this.player.y - 14, WEAPONS[w].name, 0xffffff);
-      }
+    WEAPON_ORDER.forEach(w => {
+      if (this.controls.pressed('weapon_' + w)) this.selectWeapon(w);
+    });
+    if (this.controls.pressed('nextWeapon')) {
+      const owned = WEAPON_ORDER.filter(w => this.state.owned.includes(w));
+      this.selectWeapon(owned[(owned.indexOf(this.state.weapon) + 1) % owned.length]);
+    }
+  }
+
+  // Switch weapons (keys, TAB, or tapping the weapon bar).
+  selectWeapon(w) {
+    if (this.dead || this.completing) return;
+    if (!this.state.owned.includes(w)) {
+      Sfx.play('error');
+      this.message(this.player.x, this.player.y - 14, 'NO ' + WEAPONS[w].name, 0xff8080);
+    } else if (this.state.weapon !== w) {
+      this.state.weapon = w;
+      Sfx.play('select');
+      this.floatText(this.player.x, this.player.y - 14, WEAPONS[w].name, 0xffffff);
     }
   }
 
   // ---------------------------------------------------------- superpowers
 
   updatePowers(time) {
-    const k = this.keys;
-    const JustDown = Phaser.Input.Keyboard.JustDown;
-    if (JustDown(k.powerEarth)) this.usePower('earth', time);
-    if (JustDown(k.powerCrystal)) this.usePower('crystal', time);
-    if (JustDown(k.powerShadow)) this.usePower('shadow', time);
+    RUNE_ORDER.forEach(r => {
+      if (this.controls.pressed('rune_' + r)) this.usePower(r, time);
+    });
   }
 
-  usePower(rune, time) {
+  usePower(rune, time = this.time.now) {
     const def = RUNES[rune];
     const pl = this.player;
+    if (this.dead || this.completing) return;
     if (!this.state.runes.includes(rune)) {
       Sfx.play('error');
       this.message(pl.x, pl.y - 14, 'FIND THE ' + def.name, 0xff8080);
@@ -446,6 +517,7 @@ class GameScene extends Phaser.Scene {
     this.powerReady[rune] = time + def.cooldown;
     Sfx.play('power');
     this.floatText(pl.x, pl.y - 18, def.power, def.color);
+    this.trackDaily('power');
 
     if (rune === 'earth') {
       pl.stoneUntil = time + def.duration;
@@ -480,13 +552,17 @@ class GameScene extends Phaser.Scene {
           e.hurt(def.damage, e.x < pl.x ? -1 : 1, 200);
         }
       });
+    } else {
+      this.castRune(rune, def, time);   // the newer runes (GameMagic.js)
     }
   }
 
   // ---------------------------------------------------------------- combat
 
   touchEnemy(e) {
-    if (e.dying || e.untouchable || (e.isBoss && !e.awake)) return;
+    if (e.dying || e.untouchable || e.caught || (e.isBoss && !e.awake)) return;
+    // Frozen or stunned mobs (and everything during a time stop) are harmless.
+    if (e.isHeld()) return;
     const time = this.time.now;
     if (this.player.stoneActive(time)) {
       // Stone Skin: enemies you touch get hurt instead.
@@ -497,6 +573,22 @@ class GameScene extends Phaser.Scene {
       return;
     }
     this.damagePlayer(e.def.damage, e.x);
+  }
+
+  // The closest enemy that can be hit, on screen and within range.
+  nearestEnemy(x, y, range) {
+    const view = this.cameras.main.worldView;
+    let best = null, bestD = range;
+    this.enemies.getChildren().forEach(e => {
+      if (!e.active || e.dying || e.caught || (e.isBoss && (!e.awake || e.untouchable))) return;
+      if (e.x < view.left - 8 || e.x > view.right + 8) return;
+      const d = Phaser.Math.Distance.Between(x, y, e.x, e.y);
+      if (d < bestD) {
+        best = e;
+        bestD = d;
+      }
+    });
+    return best;
   }
 
   startMelee(weapon, damage) {
@@ -514,7 +606,8 @@ class GameScene extends Phaser.Scene {
     const w = m.weapon;
     const b = this.player.body;
     const f = this.player.facing;
-    const rect = new Phaser.Geom.Rectangle(f > 0 ? b.right - 2 : b.left - w.reach + 2, b.center.y - w.height / 2, w.reach, w.height);
+    const cy = this.player.riding ? b.top + 8 : b.center.y;
+    const rect = new Phaser.Geom.Rectangle(f > 0 ? b.right - 2 : b.left - w.reach + 2, cy - w.height / 2, w.reach, w.height);
     if (m.slash.active) {
       m.slash.setPosition(rect.centerX, rect.centerY).setFlipX(f < 0);
     }
@@ -527,24 +620,48 @@ class GameScene extends Phaser.Scene {
       return Phaser.Geom.Intersects.RectangleToRectangle(rect, new Phaser.Geom.Rectangle(ob.x, ob.y, ob.width, ob.height));
     };
     this.enemies.getChildren().slice().forEach(e => {
-      if (!e.active || e.dying || m.hit.has(e) || !overlaps(e)) return;
+      if (!e.active || e.dying || e.caught || m.hit.has(e) || !overlaps(e)) return;
       m.hit.add(e);
       e.hurt(m.damage, f, w.knockback);
       if (w.shake) this.cameras.main.shake(110, 0.008);
+      // The hammer sometimes stuns.
+      if (w.stunChance && e.active && !e.dying && !(e.isBoss && !e.awake) && Math.random() < w.stunChance) {
+        e.immobilize(w.stunTime, 'stun');
+        Sfx.play('stun');
+        this.floatText(e.x, e.y - e.height / 2 - 8, 'STUNNED!', 0xffe080);
+        this.trackDaily('stun');
+      }
     });
     // Melee swings also knock enemy shots out of the air.
     this.enemyProjectiles.getChildren().slice().forEach(proj => {
-      if (proj.active && overlaps(proj)) proj.impact();
+      if (proj.active && !proj.caughtBy && overlaps(proj)) proj.impact();
     });
   }
 
+  // Ranged weapons aim at the nearest enemy; with nobody around they fire
+  // straight ahead.
   fireWeapon(weapon, damage) {
-    const f = this.player.facing;
-    const x = this.player.x + f * 8;
-    const y = this.player.body.center.y + 1;
-    if (weapon.style === 'bomb') {
-      new Bomb(this, x, y - 2, f, weapon, damage);
-      return;
+    const pl = this.player;
+    const f = pl.facing;
+    const x = pl.x + f * 8;
+    const y = (pl.riding ? pl.body.top + 8 : pl.body.center.y) + 1;
+    const target = this.nearestEnemy(x, y, 300);
+    switch (weapon.style) {
+      case 'bomb': {
+        const dir = target ? (target.x < x ? -1 : 1) : f;
+        new Bomb(this, x, y - 2, dir, weapon, damage);
+        return;
+      }
+      case 'boomerang': {
+        let a = f > 0 ? 0 : Math.PI;
+        if (target) a = Math.atan2(target.body.center.y - y, target.x - x);
+        new Boomerang(this, x, y, Math.cos(a) * weapon.speed, Math.sin(a) * weapon.speed, weapon, damage);
+        return;
+      }
+      case 'earth': this.quake(weapon, damage); return;
+      case 'air': new Tornado(this, x + f * 6, y - 2, f, weapon, damage); return;
+      case 'lightning': this.castLightning(weapon, damage); return;
+      case 'void': this.pulseVoid(weapon); return;
     }
     const opts = {
       group: this.playerProjectiles,
@@ -554,9 +671,30 @@ class GameScene extends Phaser.Scene {
       damage,
       knockback: weapon.knockback,
       lifetime: weapon.lifetime,
-      trail: weapon.projectile === 'fireball',
+      trail: weapon.projectile === 'fireball' ? true : (weapon.style === 'ice' ? 'ice' : false),
+      freeze: weapon.freeze,
     };
-    if (weapon.style === 'thrown') Object.assign(opts, { vy: weapon.lift, gravity: weapon.gravity, spin: f * 900, pierce: weapon.pierce });
+    if (weapon.style === 'thrown') {
+      let vx = f * weapon.speed;
+      if (target) {
+        const dx = target.x - x;
+        vx = Phaser.Math.Clamp(dx / 0.6, -260, 260);
+        if (Math.abs(vx) < 60) vx = (dx < 0 ? -1 : 1) * 60;
+      }
+      Object.assign(opts, { dir: vx < 0 ? -1 : 1, vx, vy: weapon.lift, gravity: weapon.gravity, spin: (vx < 0 ? -1 : 1) * 900, pierce: weapon.pierce });
+    } else if (target) {
+      const a = Math.atan2(target.body.center.y - y, target.x - x);
+      Object.assign(opts, {
+        dir: Math.cos(a) < 0 ? -1 : 1,
+        vx: Math.cos(a) * weapon.speed,
+        vy: Math.sin(a) * weapon.speed,
+        rotate: weapon.projectile !== 'fireball',
+        homing: target,
+      });
+    } else {
+      opts.rotate = weapon.projectile !== 'fireball';
+      opts.vx = f * weapon.speed;
+    }
     new Projectile(this, x, y, opts);
   }
 
@@ -581,6 +719,11 @@ class GameScene extends Phaser.Scene {
   damagePlayer(amount, fromX) {
     const time = this.time.now;
     if (this.completing || this.player.isInvulnerable(time)) return;
+    // Riding: the pegasus takes the hit.
+    if (this.player.riding && this.pegasus) {
+      this.hurtPegasus(time, fromX);
+      return;
+    }
     const s = this.state;
     // Armor's shield hearts soak up damage first.
     const absorbed = Math.min(s.armorHp, amount);
@@ -606,9 +749,15 @@ class GameScene extends Phaser.Scene {
     this.dead = true;
     this.player.dead = true;
     this.state.hp = 0;
+    this.melee = null;
+    if (this.player.riding) {
+      this.player.setRiding(false);
+      if (this.pegasus) this.pegasus.mode = 'follow';
+    }
     Sfx.play('death');
     this.cameras.main.shake(250, 0.015);
     this.fx('blood', this.player.x, this.player.y, 16);
+    Profile.save();
 
     // Classic death hop, falling through the floor.
     this.playerTiles.active = false;
@@ -626,7 +775,10 @@ class GameScene extends Phaser.Scene {
       this.cameras.main.fadeOut(300);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         // Respawn with the state from when the level (or boss fight) began.
-        this.registry.set('state', GameState.clone(this.registry.get('levelStart')));
+        // The run timer keeps counting.
+        const restored = GameState.clone(this.registry.get('levelStart'));
+        restored.time = this.state.time;
+        this.registry.set('state', restored);
         this.scene.restart();
       });
     });
@@ -640,6 +792,30 @@ class GameScene extends Phaser.Scene {
     const gems = between(d.gems);
     for (let i = 0; i < gems; i++) new Pickup(this, enemy.x, enemy.y - 4, 'gem', { dropped: true });
     if (Math.random() < d.potionChance) new Pickup(this, enemy.x, enemy.y - 4, 'potion', { dropped: true });
+    if (!enemy.isBoss && Math.random() < ITEM_DROP_CHANCE) {
+      new Pickup(this, enemy.x, enemy.y - 4, 'item', { item: Phaser.Utils.Array.GetRandom(ITEM_ORDER), dropped: true });
+    }
+  }
+
+  // --------------------------------------------------------- daily tasks
+
+  trackDaily(event, amount = 1) {
+    Daily.track(event, amount).forEach(t => {
+      Sfx.play('task');
+      this.toast('DAILY TASK DONE!', t.text);
+    });
+  }
+
+  // A small notice under the HUD that doesn't get in the way.
+  toast(title, text) {
+    const cx = this.scale.width / 2;
+    const items = [
+      this.add.rectangle(cx, 56, 250, 24, 0x000000, 0.6).setStrokeStyle(1, 0xffcd3a),
+      pixelText(this, cx, 50, title, { origin: 0.5, tint: 0xffcd3a }),
+      pixelText(this, cx, 61, text, { origin: 0.5 }),
+    ];
+    items.forEach(t => t.setScrollFactor(0).setDepth(100));
+    this.tweens.add({ targets: items, alpha: 0, delay: 2200, duration: 400, onComplete: () => items.forEach(t => t.destroy()) });
   }
 
   // ------------------------------------------------------------------ boss
@@ -669,6 +845,7 @@ class GameScene extends Phaser.Scene {
   onBossDefeated(boss) {
     this.registry.set('boss', null);
     this.registry.set('checkpoint', null);
+    this.trackDaily('boss');
     // Minions vanish with their master.
     this.enemies.getChildren().slice().forEach(e => {
       if (e !== boss && e.active && !e.dying) e.die();
@@ -699,6 +876,7 @@ class GameScene extends Phaser.Scene {
         s.gold += 1;
         this.addScore(10);
         this.fx('gold', item.x, item.y, 4);
+        this.trackDaily('coin');
         break;
       case 'gem':
         Sfx.play('gem');
@@ -706,11 +884,13 @@ class GameScene extends Phaser.Scene {
         this.addScore(50);
         this.floatText(item.x, item.y - 8, '+5 GOLD', 0x80e0ff);
         this.fx('crystal', item.x, item.y, 8);
+        this.trackDaily('gem');
         break;
       case 'potion':
         Sfx.play('potion');
         s.hp = Math.min(s.maxHp, s.hp + 3);
         this.floatText(item.x, item.y - 8, '+3 HP', 0x80ff80);
+        this.trackDaily('potion');
         break;
       case 'heart':
         Sfx.play('heart');
@@ -724,6 +904,9 @@ class GameScene extends Phaser.Scene {
         break;
       case 'rune':
         this.collectRune(item.rune, item.x, item.y);
+        break;
+      case 'item':
+        this.useItem(item.item, item.x, item.y);
         break;
     }
     item.destroy();
@@ -754,10 +937,10 @@ class GameScene extends Phaser.Scene {
     if (!this.state.runes.includes(rune)) this.state.runes.push(rune);
     Sfx.play('rune');
     this.fx('gold', x, y, 20);
-    this.fx(rune === 'earth' ? 'goo' : rune === 'crystal' ? 'crystal' : 'shadow', x, y, 20);
+    this.fx(def.fx, x, y, 20);
     this.cameras.main.flash(250, 255, 255, 255);
     this.addScore(200);
-    this.banner(def.name + ' FOUND!', `SUPERPOWER ${def.power} - PRESS ${def.key}`, 2400);
+    this.banner(def.name + ' FOUND!', `SUPERPOWER ${def.power} - ${InputMode.ipad ? 'TAP ITS ICON' : 'PRESS ' + def.key}`, 2400);
   }
 
   addScore(points, x, y) {
@@ -782,17 +965,19 @@ class GameScene extends Phaser.Scene {
     this.cameras.main.shake(150, 0.005);
     this.addScore(100 * (this.levelIndex + 1), this.chest.x, this.chest.y - 20);
     this.registry.set('checkpoint', null);
+    this.trackDaily('level');
+    Profile.save();
 
     const next = this.levelIndex + 1;
     if (next >= LEVELS.length) {
       SaveManager.clear();
       SaveManager.setBest(this.state.score);
-      this.banner('TREASURE FOUND!', 'THE DARK DRAGON IS DEFEATED', 1800);
+      this.banner('TREASURE FOUND!', 'THE MASTER OF TIME IS DEFEATED', 1800);
+      const result = { score: this.state.score, time: this.state.time, level: LEVELS.length };
       this.time.delayedCall(2000, () => {
         this.cameras.main.fadeOut(500);
         this.cameras.main.once('camerafadeoutcomplete', () => {
-          this.scene.stop('UIScene');
-          this.scene.start('WinScene', { score: this.state.score });
+          this.leaveTo('CutsceneScene', { story: 'ending', next: 'WinScene', nextData: result });
         });
       });
     } else {
@@ -801,10 +986,7 @@ class GameScene extends Phaser.Scene {
       this.banner('LEVEL COMPLETE!', saved ? 'PROGRESS SAVED' : 'COULD NOT SAVE', 1800);
       this.time.delayedCall(2000, () => {
         this.cameras.main.fadeOut(400);
-        this.cameras.main.once('camerafadeoutcomplete', () => {
-          this.scene.stop('UIScene');
-          this.scene.start('ShopScene');
-        });
+        this.cameras.main.once('camerafadeoutcomplete', () => this.leaveTo('ShopScene'));
       });
     }
   }

@@ -1,5 +1,7 @@
 // Base enemy plus one subclass per enemy type.
 // Enemies ignore the platform death rule: walls only stop them.
+// Subclasses put their behaviour in tick(); update() skips it while the enemy
+// is frozen (ice), stunned (hammer), stopped in time, or caught in a tornado.
 class Enemy extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, type, texture) {
     super(scene, x, y, texture);
@@ -12,11 +14,41 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.diff = scene.level.difficulty;
     this.hp = this.def.hp + (this.diff.hpBonus || 0);
     this.stunUntil = 0;
+    this.heldUntil = 0;     // frozen or stunned until this time
+    this.heldKind = null;   // 'ice' | 'stun'
+    this.held = false;
+    this.caught = null;     // the tornado carrying this enemy
     this.dying = false;
     this.setDepth(5);
   }
 
   get collidesWithTiles() { return true; }
+
+  // Can't move or attack: frozen, stunned, or the whole world is stopped.
+  isHeld(time = this.scene.time.now) {
+    return time < this.heldUntil || this.scene.timeStopped(time);
+  }
+
+  // Freeze ('ice') or stun ('stun') for ms. Bosses shake it off faster.
+  immobilize(ms, kind) {
+    if (!this.active || this.dying) return;
+    if (this.isBoss) ms *= 0.35;
+    this.heldUntil = Math.max(this.heldUntil, this.scene.time.now + ms);
+    this.heldKind = kind;
+    this.restoreTint();
+    if (kind === 'stun' && !this.stunIcon) {
+      this.stunIcon = this.scene.add.image(this.x, this.y, 'stars').setDepth(7);
+    }
+  }
+
+  // The tint that matches the enemy's state (after a hit flash).
+  restoreTint() {
+    if (!this.active) return;
+    const time = this.scene.time.now;
+    if (time < this.heldUntil && this.heldKind === 'ice') this.setTint(0x90d8ff);
+    else if (this.scene.timeStopped(time)) this.setTint(0xc0b0ff);
+    else this.clearTint();
+  }
 
   // Stand the enemy on ground whose top edge is at pixel row `bottom`.
   placeOnGround(bottom) {
@@ -28,7 +60,7 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.hp -= damage;
     this.scene.floatText(this.x, this.y - this.height / 2, '-' + damage, 0xffe080);
     this.setTintFill(0xffffff);
-    this.scene.time.delayedCall(80, () => { if (this.active) this.clearTint(); });
+    this.scene.time.delayedCall(80, () => this.restoreTint());
     this.scene.fx('spark', this.x, this.y, 5);
     if (this.hp <= 0) {
       this.die();
@@ -50,12 +82,56 @@ class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.scene.fx(this.def.fx || 'bone', this.x, this.y, 14);
     this.scene.addScore(this.def.score, this.x, this.y - 10);
     this.scene.dropLoot(this);
+    this.scene.trackDaily('kill');
     this.destroy();
   }
 
-  update(time) {
-    if (this.active && this.y > this.scene.worldH + 64) this.destroy();
+  destroy(fromScene) {
+    if (this.stunIcon) {
+      this.stunIcon.destroy();
+      this.stunIcon = null;
+    }
+    super.destroy(fromScene);
   }
+
+  update(time, delta) {
+    if (!this.active) return;
+    if (this.y > this.scene.worldH + 64) {
+      this.destroy();
+      return;
+    }
+    if (this.caught) return;          // the tornado moves it
+    if (this.stunIcon) {
+      if (time >= this.heldUntil) {
+        this.stunIcon.destroy();
+        this.stunIcon = null;
+      } else {
+        this.stunIcon.setPosition(this.x, this.y - this.height / 2 - 4).setFlipX(Math.floor(time / 150) % 2 === 0);
+      }
+    }
+    if (!this.dying && this.isHeld(time)) {
+      if (!this.held) {
+        this.held = true;
+        if (this.anims.isPlaying) this.anims.pause();
+        this.restoreTint();
+      }
+      this.body.setVelocityX(0);
+      if (!this.body.allowGravity) this.body.setVelocityY(0);
+      this.body.setAcceleration(0, 0);
+      // Attack timers wait too.
+      if (this.nextAttack) this.nextAttack += delta;
+      this.stunUntil += delta;
+      return;
+    }
+    if (this.held) {
+      this.held = false;
+      if (this.anims.isPaused) this.anims.resume();
+      this.restoreTint();
+    }
+    this.tick(time, delta);
+  }
+
+  tick() {}
 }
 
 class Slime extends Enemy {
@@ -67,8 +143,7 @@ class Slime extends Enemy {
     this.play({ key: 'slime_move', startFrame: Phaser.Math.Between(0, 1) });
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active || time < this.stunUntil) return;
     const b = this.body;
     if (b.blocked.left) this.dir = 1;
@@ -99,8 +174,7 @@ class Bat extends Enemy {
 
   get collidesWithTiles() { return false; }
 
-  update(time, delta) {
-    super.update(time);
+  tick(time, delta) {
     if (!this.active) return;
     const dt = delta / 1000;
     const d = this.def;
@@ -157,8 +231,7 @@ class Skeleton extends Enemy {
     this.windingUp = false;
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active) return;
     const player = this.scene.player;
     if (time >= this.stunUntil && this.body.blocked.down) this.body.setVelocityX(0);
@@ -206,8 +279,7 @@ class GemCrab extends Enemy {
     this.play({ key: 'crab_walk', startFrame: Phaser.Math.Between(0, 1) });
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active || time < this.stunUntil) return;
     const b = this.body;
     const d = this.def;
@@ -251,8 +323,7 @@ class Golemite extends Enemy {
     super.knock(dir, force * this.def.knockResist);
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active || time < this.stunUntil) return;
     const b = this.body;
     const d = this.def;
@@ -283,8 +354,7 @@ class Ninja extends Enemy {
     this.poseUntil = 0;
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active || time < this.stunUntil) return;
     const b = this.body;
     const d = this.def;

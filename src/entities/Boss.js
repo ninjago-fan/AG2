@@ -78,17 +78,23 @@ class Boss extends Enemy {
     const groundTop = this.scene.groundTop(a.left + 64);
     for (let i = 0; i < n; i++) {
       const x = i % 2 ? a.left + 40 : a.right - 40;
-      const e = new ENEMY_CLASSES[type](this.scene, x, groundTop - 40);
-      e.placeOnGround(groundTop);
-      this.scene.fx('smoke', x, groundTop - 8, 12);
+      const flying = FLYING_ENEMIES.includes(type);
+      const e = new ENEMY_CLASSES[type](this.scene, x, flying ? groundTop - 90 : groundTop - 40);
+      if (!flying) e.placeOnGround(groundTop);
+      this.scene.fx('smoke', x, e.y, 12);
     }
     if (n > 0) Sfx.play('bossRoar');
   }
 
+  // Run fn after ms, unless the boss is gone. While the boss is frozen or
+  // time is stopped, the attack waits.
   later(ms, fn) {
-    this.scene.time.delayedCall(ms, () => {
-      if (this.active && !this.dying) fn();
-    });
+    const run = () => {
+      if (!this.active || this.dying) return;
+      if (this.isHeld()) this.scene.time.delayedCall(100, run);
+      else fn();
+    };
+    this.scene.time.delayedCall(ms, run);
   }
 
   die() {
@@ -133,8 +139,7 @@ class GrassyGolem extends Boss {
     this.mode = 'walk';
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active || this.dying) return;
     const b = this.body;
     if (!this.awake) {
@@ -219,8 +224,7 @@ class CrystalCrab extends Boss {
     this.play('crab_boss_walk');
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active || this.dying) return;
     const b = this.body;
     const a = this.arena;
@@ -300,8 +304,7 @@ class MysteriousStranger extends Boss {
     this.mode = 'idle';
   }
 
-  update(time) {
-    super.update(time);
+  tick(time) {
     if (!this.active || this.dying) return;
     const b = this.body;
     const dx = this.player.x - this.x;
@@ -418,8 +421,7 @@ class DarkDragon extends Boss {
 
   get collidesWithTiles() { return false; }
 
-  update(time, delta) {
-    super.update(time);
+  tick(time, delta) {
     if (!this.active || this.dying) return;
     const b = this.body;
     const a = this.arena;

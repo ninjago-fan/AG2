@@ -51,30 +51,7 @@ const EXTRA_SPRITES = {
     '............',
     '............',
   ],
-  crab1: [
-    '.......Ui.......',
-    '......UiUu......',
-    '.WK...UUuu...KW.',
-    '..R..RRRRRR..R..',
-    '.RR.RRRRRRRR.RR.',
-    '..RRRRRRRRRRRR..',
-    '...rRRRRRRRRr...',
-    '....rrrrrrrr....',
-    '...r.r....r.r...',
-    '..r..r....r..r..',
-  ],
-  crab2: [
-    '.......Ui.......',
-    '......UiUu......',
-    '.WK...UUuu...KW.',
-    '..R..RRRRRR..R..',
-    '.RR.RRRRRRRR.RR.',
-    '..RRRRRRRRRRRR..',
-    '...rRRRRRRRRr...',
-    '....rrrrrrrr....',
-    '....r.r..r.r....',
-    '....r..rr..r....',
-  ],
+  // crab1 / crab2 (the crystal gem crab) are in sprites2.js.
   golemite1: [
     '....MMMM....',
     '..MMmMMMMM..',
@@ -492,16 +469,20 @@ function crabShape(frame) {
     // eyes on stalks
     if ((x === 16 || x === 23) && y >= 6 && y <= 9) return 'C';
     if ((inRect(x, y, 15, 4, 17, 5) || inRect(x, y, 22, 4, 24, 5))) return ((x === 16 || x === 23) && y === 5) ? 'K' : 'W';
-    // crystals on the shell
-    const spikes = [[13, 3], [20, 0], [27, 3]];
+    // big crystals growing out of the shell
+    const spikes = [[9, 4], [13, 1], [20, -2], [27, 1], [31, 4]];
     for (const [cx, top] of spikes) {
       if (y >= top && y <= 11 && Math.abs(px - cx) <= (y - top) * 0.35 + 0.5) return px < cx ? 'U' : (px - cx < 1 ? 'i' : 'u');
     }
-    // shell: an upper half-ellipse
+    // shell: an upper half-ellipse cut into crystal facets
     const ex = (px - 20) / 14, ey = (py - 17) / 8;
     const e = ex * ex + ey * ey;
-    if (e <= 1 && y <= 19) return e > 0.72 ? 'r' : 'R';
-    // claws
+    if (e <= 1 && y <= 19) {
+      if (e > 0.72) return 'u';
+      const facet = Math.floor((Math.atan2(ey, ex) + Math.PI) * 2.2 + e * 2) % 3;
+      return ['U', 'i', 'U', 'u'][facet];
+    }
+    // claws: crystal pincers
     const clawY = frame === 2 ? 6 : 12;
     for (const cx of [4.5, 35.5]) {
       const dx = px - cx, dy = py - clawY;
@@ -509,19 +490,19 @@ function crabShape(frame) {
       if (d <= 20) {
         const outward = cx < 20 ? -dx : dx;
         if (Math.abs(dy) < 1 && outward > 0) return null;     // pincer gap
-        return d > 12 ? 'r' : 'R';
+        return d > 12 ? 'u' : (dx + dy < -1 ? 'i' : 'U');
       }
     }
     // arms
     if (frame === 2) {
-      if ((x === 6 || x === 7 || x === 32 || x === 33) && y >= 9 && y <= 15) return 'r';
-    } else if (y >= 13 && y <= 14 && (inRect(x, y, 8, 0, 9, 99) || inRect(x, y, 30, 0, 31, 99))) return 'r';
+      if ((x === 6 || x === 7 || x === 32 || x === 33) && y >= 9 && y <= 15) return 'u';
+    } else if (y >= 13 && y <= 14 && (inRect(x, y, 8, 0, 9, 99) || inRect(x, y, 30, 0, 31, 99))) return 'u';
     // legs
     if (y >= 19 && y <= 23) {
       const k = (y - 19) >> 1;
       const swing = frame === 1 ? 1 : -1;
-      for (const base of [10, 14, 18]) if (x === base - k * swing) return 'r';
-      for (const base of [22, 26, 30]) if (x === base + k * swing) return 'r';
+      for (const base of [10, 14, 18]) if (x === base - k * swing) return 'u';
+      for (const base of [22, 26, 30]) if (x === base + k * swing) return 'u';
     }
     return null;
   };
