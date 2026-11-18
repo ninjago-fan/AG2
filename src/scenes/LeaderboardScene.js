@@ -79,6 +79,7 @@ class LeaderboardScene extends Phaser.Scene {
   constructor() { super('LeaderboardScene'); }
 
   create(data = {}) {
+    Music.forScene(this, SONGS.menu);
     const W = this.scale.width, H = this.scale.height;
     this.data_ = data;
     this.leaving = false;

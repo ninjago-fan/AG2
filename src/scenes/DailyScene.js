@@ -4,6 +4,7 @@ class DailyScene extends Phaser.Scene {
   constructor() { super('DailyScene'); }
 
   create() {
+    Music.forScene(this, SONGS.menu);
     const W = this.scale.width, H = this.scale.height;
     this.leaving = false;
     this.add.image(0, 0, 'sky_0').setOrigin(0).setDisplaySize(W, H);

@@ -24,6 +24,7 @@ class ShopScene extends Phaser.Scene {
   constructor() { super('ShopScene'); }
 
   create() {
+    Music.forScene(this, SONGS.shop);
     const W = this.scale.width, H = this.scale.height;
     this.state = this.registry.get('state');
     this.profile = Profile.get();

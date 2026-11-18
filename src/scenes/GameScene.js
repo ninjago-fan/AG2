@@ -66,9 +66,17 @@ class GameScene extends Phaser.Scene {
     Shaders.apply(this);
 
     this.controls = new Controls(this);
-    const onResume = () => this.controls.reset();
+    const onResume = () => { this.controls.reset(); Music.resume(); };
+    const onPause = () => Music.pause();
     this.events.on('resume', onResume);
-    this.events.once('shutdown', () => this.events.off('resume', onResume));
+    this.events.on('pause', onPause);
+    this.events.once('shutdown', () => {
+      this.events.off('resume', onResume);
+      this.events.off('pause', onPause);
+      Music.stop();
+    });
+    // Retrying from the boss checkpoint keeps the boss music going.
+    Music.play(this.checkpoint ? SONGS.boss : SONGS.level);
 
     if (!this.scene.isActive('UIScene')) this.scene.launch('UIScene');
     this.scene.bringToTop('UIScene');
@@ -829,6 +837,7 @@ class GameScene extends Phaser.Scene {
     this.bossStarted = true;
     this.boss.activate(time);
     Sfx.play('bossRoar');
+    Music.play(SONGS.boss);
     this.cameras.main.shake(400, 0.01);
     this.banner(this.boss.def.name, 'BOSS FIGHT!', 1600);
     this.registry.set('checkpoint', { level: this.levelIndex, x: this.arena.left + 24 });
@@ -843,6 +852,7 @@ class GameScene extends Phaser.Scene {
   }
 
   onBossDefeated(boss) {
+    Music.play(SONGS.level);
     this.registry.set('boss', null);
     this.registry.set('checkpoint', null);
     this.trackDaily('boss');
