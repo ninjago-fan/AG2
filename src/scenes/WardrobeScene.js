@@ -6,6 +6,7 @@ class WardrobeScene extends Phaser.Scene {
   constructor() { super('WardrobeScene'); }
 
   create() {
+    Music.forScene(this, SONGS.menu);
     const W = this.scale.width, H = this.scale.height;
     this.profile = Profile.get();
     this.row = 0;

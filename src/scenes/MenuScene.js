@@ -2,6 +2,7 @@ class MenuScene extends Phaser.Scene {
   constructor() { super('MenuScene'); }
 
   create() {
+    Music.forScene(this, SONGS.menu);
     const W = this.scale.width;
     this.chosen = false;
 
